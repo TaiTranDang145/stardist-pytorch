@@ -101,17 +101,23 @@ def kld_metric(y_true, y_pred):
 def total_loss(prob_pred, dist_pred, prob_gt, dist_mask_gt, loss_weights=(1.0, 0.2)):
     """
     Tổng loss = w1 * prob_loss + w2 * dist_loss
-    dist_mask_gt: (B, H, W, n_rays + 1) - kênh cuối là mask
+    dist_mask_gt: (B, n_rays + 1, H, W) - kênh cuối là mask
     """
     prob_loss_fn = masked_bce_loss()
+    
+    # Kênh cuối của dist_mask_gt là mask (B, 1, H, W)
+    mask = dist_mask_gt[:, -1:] 
+    # n_rays kênh đầu là ground truth distance (B, n_rays, H, W)
+    dist_gt = dist_mask_gt[:, :-1]
+
     dist_loss_fn = masked_mae_loss(
-        mask=dist_mask_gt[..., -1:],  # kênh mask cuối
+        mask=mask,
         reg_weight=1e-4,
         norm_by_mask=True
     )
 
     prob_loss = prob_loss_fn(prob_gt, prob_pred)
-    dist_loss = dist_loss_fn(dist_mask_gt[..., :-1], dist_pred)  # dist true là n_rays kênh đầu
+    dist_loss = dist_loss_fn(dist_gt, dist_pred)
 
     total = loss_weights[0] * prob_loss + loss_weights[1] * dist_loss
     return total

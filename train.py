@@ -70,8 +70,7 @@ def train():
         mode='min',
         factor=0.5,
         patience=40,           # giống train_reduce_lr gốc
-        min_lr=1e-7,
-        verbose=True
+        min_lr=1e-7
     )
 
     best_val_loss = float('inf')

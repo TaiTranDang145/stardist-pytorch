@@ -26,21 +26,23 @@ class StarDist2D(nn.Module):
         self,
         n_channels_in=1,
         n_rays=32,
-        base_filters=32,
-        depth=3,
+        grid=(1, 1),
+        unet_n_filter_base=32,
+        unet_n_depth=3,
         net_conv_after_unet=128,
     ):
         super().__init__()
         self.n_rays = n_rays
+        self.grid = grid
 
         # -------- Encoder --------
         self.down_blocks = nn.ModuleList()
         self.pools = nn.ModuleList()
 
         in_ch = n_channels_in
-        out_ch = base_filters
+        out_ch = unet_n_filter_base
 
-        for _ in range(depth):
+        for _ in range(unet_n_depth):
             self.down_blocks.append(DoubleConv(in_ch, out_ch))
             self.pools.append(nn.MaxPool2d(2))
             in_ch = out_ch
@@ -53,7 +55,7 @@ class StarDist2D(nn.Module):
         self.up_transpose = nn.ModuleList()
         self.up_blocks = nn.ModuleList()
 
-        for _ in range(depth):
+        for _ in range(unet_n_depth):
             self.up_transpose.append(
                 nn.ConvTranspose2d(out_ch, out_ch // 2, 2, stride=2)
             )

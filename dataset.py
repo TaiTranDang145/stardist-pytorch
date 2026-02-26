@@ -200,16 +200,16 @@ def create_dataloaders(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=num_workers,
         collate_fn=custom_collate,
         pin_memory=pin_memory,
     )
-
+ 
     val_loader = DataLoader(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=num_workers,
         collate_fn=custom_collate,
         pin_memory=pin_memory,
     )

@@ -115,9 +115,10 @@ def non_maximum_suppression(dist, prob, grid=(1,1), prob_thresh=0.5, nms_thresh=
             inter_area = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
             area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
             area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
-
-            iou = inter_area / min(area1, area2) if min(area1, area2) > 0 else 0
-
+ 
+            union = area1 + area2 - inter_area
+            iou = inter_area / union if union > 0 else 0
+ 
             if iou > nms_thresh:
                 survivors[j] = False
 
@@ -160,9 +161,10 @@ def inference(model, image, prob_thresh=0.5, nms_thresh=0.5, device='cuda'):
 
 # ====================== Test inference đơn giản ======================
 if __name__ == "__main__":
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # Giả lập image và model
-    model = StarDist2D()
+    model = StarDist2D(n_channels_in=1).to(device)
     dummy_img = np.random.rand(256, 256).astype(np.float32)
-    labels, info = inference(model, dummy_img)
+    labels, info = inference(model, dummy_img, device=device)
     print("Instance mask shape:", labels.shape)
     print("Số object detect:", len(np.unique(labels)) - 1)
