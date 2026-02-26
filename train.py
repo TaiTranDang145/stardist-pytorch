@@ -34,13 +34,16 @@ class TrainConfig:
 def train():
     config = TrainConfig()
 
-    # Tạo thư mục
-    os.makedirs(config.save_dir, exist_ok=True)
+    # Tạo thư mục và xóa log cũ
+    if os.path.exists(config.log_dir):
+        import shutil
+        shutil.rmtree(config.log_dir)
     os.makedirs(config.log_dir, exist_ok=True)
+    os.makedirs(config.save_dir, exist_ok=True)
 
     # TensorBoard writer
     writer = SummaryWriter(log_dir=config.log_dir)
-    print(f"TensorBoard logs tại: {config.log_dir}")
+    print(f"TensorBoard logs tại: {config.log_dir} (đã xóa log cũ)")
     print("Chạy lệnh: tensorboard --logdir=tensorboard_logs")
 
     # DataLoaders
