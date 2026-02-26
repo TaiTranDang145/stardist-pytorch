@@ -18,17 +18,18 @@ def generic_masked_loss(mask, loss_fn, weights=1.0, norm_by_mask=True, reg_weigh
     """
     def _loss(y_true, y_pred):
         # Cast về float
-        mask = mask.float()
-        weights = torch.as_tensor(weights, device=y_true.device, dtype=torch.float32)
-
+        # Sử dụng tên biến khác để tránh UnboundLocalError (shadowing closure variables)
+        m = mask.float()
+        w = torch.as_tensor(weights, device=y_true.device, dtype=torch.float32)
+ 
         # Actual loss chỉ trên vùng mask=1
         per_pixel_loss = loss_fn(y_true, y_pred)
-        actual_loss = torch.mean(mask * weights * per_pixel_loss, dim=[1,2,3])  # mean theo spatial
-
+        actual_loss = torch.mean(m * w * per_pixel_loss, dim=[1,2,3])  # mean theo spatial
+ 
         # Normalize theo % valid pixels
-        norm_mask = (torch.mean(mask, dim=[1,2,3]) + 1e-8) if norm_by_mask else 1.0
+        norm_mask = (torch.mean(m, dim=[1,2,3]) + 1e-8) if norm_by_mask else 1.0
         normalized_loss = actual_loss / norm_mask
-
+ 
         # Background regularization (nếu reg_weight > 0)
         if reg_weight > 0:
             if reg_penalty == 'abs':
@@ -37,13 +38,13 @@ def generic_masked_loss(mask, loss_fn, weights=1.0, norm_by_mask=True, reg_weigh
                 reg_fn = torch.square
             else:
                 raise ValueError("reg_penalty chỉ hỗ trợ 'abs' hoặc 'square'")
-
-            reg_loss = torch.mean((1 - mask) * reg_fn(y_pred), dim=[1,2,3])
-            total_loss = normalized_loss + reg_weight * reg_loss
+ 
+            reg_loss = torch.mean((1 - m) * reg_fn(y_pred), dim=[1,2,3])
+            total_loss_val = normalized_loss + reg_weight * reg_loss
         else:
-            total_loss = normalized_loss
-
-        return total_loss.mean()  # mean theo batch
+            total_loss_val = normalized_loss
+ 
+        return total_loss_val.mean()  # mean theo batch
 
     return _loss
 
