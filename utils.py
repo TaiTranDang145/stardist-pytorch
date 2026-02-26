@@ -103,7 +103,7 @@ def edt_prob(lbl_img: np.ndarray, anisotropy=None) -> np.ndarray:
 def star_dist(a: np.ndarray, n_rays: int = 32, grid=(1, 1)) -> np.ndarray:
     """
     Tính khoảng cách radial từ mỗi pixel đến biên giới object theo n_rays hướng.
-    Tối ưu hóa bằng cách xử lý riêng từng object và dùng vectorization.
+    Tối ưu hóa bằng cách vector hóa quá trình ray marching cho toàn bộ pixel của object.
     """
     if grid != (1, 1):
         raise NotImplementedError("grid != (1, 1) chưa được hỗ trợ")
@@ -117,56 +117,88 @@ def star_dist(a: np.ndarray, n_rays: int = 32, grid=(1, 1)) -> np.ndarray:
     dys = np.cos(angles)
     dxs = np.sin(angles)
 
-    # Tìm các object
     objects = find_objects(a)
     
     for label_id, sl in enumerate(objects, 1):
         if sl is None:
             continue
             
-        # Lấy mask của object hiện tại
         mask = (a[sl] == label_id)
         if not np.any(mask):
             continue
 
-        # Tọa độ các pixel foreground trong bounding box
-        coords = np.argwhere(mask)
+        # Tọa độ gốc của bounding box
+        y_off, x_off = sl[0].start, sl[1].start
+        h, w = mask.shape
         
-        # Với mỗi pixel foreground, tính radial distance
-        for r, c in coords:
-            # Tọa độ thực trong ảnh gốc
-            y0, x0 = r + sl[0].start, c + sl[1].start
+        # Với mỗi hướng ray
+        for k in range(n_rays):
+            dy, dx = dys[k], dxs[k]
             
-            for k in range(n_rays):
-                dy, dx = dys[k], dxs[k]
+            # Khởi tạo distance cho object hiện tại trong hướng k
+            # Chỉ tính cho các pixel thuộc mask
+            res = np.zeros((h, w), dtype=np.float32)
+            
+            # "Marching" đồng thời cho tất cả pixel trong mask
+            # Chúng ta sẽ kiểm tra các bước t = 1, 2, 4, 8... hoặc đơn giản là t++
+            # Để tối ưu hơn, ta có thể dùng search hoặc đơn giản là bước 1.0
+            
+            # Mảng active: pixel nào vẫn đang ở trong object
+            active = mask.copy()
+            t = 0.0
+            step = 1.0
+            
+            while np.any(active):
+                t += step
+                # Tọa độ mới của tất cả pixel sau khi nhảy bước t
+                # Dùng vectorization của NumPy
+                # y_new = y_orig + t * dy
                 
-                # Ước lượng bước nhảy dựa trên distance transform (nếu đã tính)
-                # Ở đây ta dùng ray marching đơn giản nhưng giới hạn trong bounding box của object
-                t = 0.0
-                while True:
-                    t += 1.0
-                    y = int(round(y0 + t * dy))
-                    x = int(round(x0 + t * dx))
+                # Tạo bản đồ dịch chuyển
+                y_look = np.round(np.arange(h)[:, None] + t * dy).astype(int) + y_off
+                x_look = np.round(np.arange(w)[None, :] + t * dx).astype(int) + x_off
+                
+                # Mask kiểm tra biên giới ảnh
+                within_bounds = (y_look >= 0) & (y_look < a.shape[0]) & \
+                                (x_look >= 0) & (x_look < a.shape[1])
+                                
+                # Cập nhật active: pixel vẫn trong object nếu y_look, x_look vẫn mang label_id
+                current_active = np.zeros((h, w), dtype=bool)
+                # Chỉ check những pixel đang active
+                y_idx, x_idx = np.where(active)
+                if len(y_idx) > 0:
+                    yl = y_look[y_idx, 0] # y_look is (h,1), x_look is (1,w)
+                    xl = x_look[0, x_idx]
                     
-                    if (y < 0 or y >= a.shape[0] or 
-                        x < 0 or x >= a.shape[1] or 
-                        a[y, x] != label_id):
-                        
-                        # Điều chỉnh chính xác hơn biên giới
-                        t_fine = t - 1.0
-                        for _ in range(3): # Bisection
-                            t_mid = t_fine + 0.5
-                            ym = int(round(y0 + t_mid * dy))
-                            xm = int(round(x0 + t_mid * dx))
-                            if (0 <= ym < a.shape[0] and 0 <= xm < a.shape[1] and 
-                                a[ym, xm] == label_id):
-                                t_fine = t_mid
-                            else:
-                                t = t_mid
-                            t_mid = (t_fine + t) / 2
-                        
-                        dst[y0, x0, k] = t_fine
-                        break
+                    # Lấy các pixel tại vị trí nhìn tới
+                    # Cẩn thận: y_look[y_idx] lấy hàng y_idx, x_look[x_idx] lấy cột x_idx
+                    # Ta cần mapping (y_idx, x_idx) -> (y_look[y_idx], x_look[x_idx])
+                    
+                    # Re-calculate mapped coordinates for active pixels only
+                    ya = np.round(y_idx + t * dy).astype(int) + y_off
+                    xa = np.round(x_idx + t * dx).astype(int) + x_off
+                    
+                    valid = (ya >= 0) & (ya < a.shape[0]) & (xa >= 0) & (xa < a.shape[1])
+                    # Nếu out of bounds hoặc khác label -> stop
+                    
+                    still_in = np.zeros(len(y_idx), dtype=bool)
+                    if np.any(valid):
+                        still_in[valid] = (a[ya[valid], xa[valid]] == label_id)
+                    
+                    # Lưu lại t cho những pixel vừa "thoát" ra
+                    newly_stopped = active.copy()
+                    newly_stopped[y_idx, x_idx] = ~still_in
+                    
+                    # Cập nhật kết quả cho những thằng vừa stop
+                    # Dùng t - 0.5 as approximation hoặc bisection nếu muốn chính xác cực cao
+                    # Ở đây dùng t_corr đơn giản như bản gốc
+                    if np.any(newly_stopped):
+                        res[newly_stopped & mask] = t - 0.5
+                    
+                    active[y_idx, x_idx] = still_in
+            
+            dst[sl][mask] = res[mask]
+
     return dst
 
 

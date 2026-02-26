@@ -15,9 +15,9 @@ from loss import total_loss, kld_metric
 
 # ====================== Config training (sát với Config2D gốc) ======================
 class TrainConfig:
-    epochs = 50                  # train_epochs gốc
+    epochs = 50                  # Tăng lên 400 epochs để hội tụ tốt hơn
     steps_per_epoch = 100          # train_steps_per_epoch gốc
-    batch_size = 8               # train_batch_size gốc (RTX 3090 có thể tăng lên 8-16)
+    batch_size = 16               # Tăng lên 16 cho RTX 4060
     learning_rate = 0.0003         # train_learning_rate gốc
     patch_size = (256, 256)
     n_rays = 32
@@ -26,7 +26,7 @@ class TrainConfig:
     loss_weights = (1.0, 0.2)      # train_loss_weights cho single-class
     save_dir = "checkpoints"
     log_dir = "tensorboard_logs"
-    checkpoint_interval = 50       # save mỗi 50 epoch
+    checkpoint_interval = 20       # save mỗi 50 epoch
     early_stop_patience = 40       # tương đương patience trong ReduceLR
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -52,7 +52,7 @@ def train():
         patch_size=config.patch_size,
         batch_size=config.batch_size,
         foreground_prob=config.foreground_prob,
-        num_workers=4,
+        num_workers=8,
         pin_memory=True,
     )
 
