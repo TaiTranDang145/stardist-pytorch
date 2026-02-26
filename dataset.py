@@ -49,11 +49,21 @@ class StarDistDataset2D(Dataset):
         # Cache valid indices
         self._ind_cache_fg = {}
         self._ind_cache_all = {}
-        self.lock = threading.Lock()
-
         # Grid mặc định (1,1) như bạn yêu cầu
         self.grid = (1, 1)
         self.ss_grid = (slice(None),) + tuple(slice(0, None, g) for g in self.grid)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Không pickle lock vì nó không picklable
+        if 'lock' in state:
+            del state['lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # Tạo lại lock ở process con
+        self.lock = threading.Lock()
 
     def __len__(self):
         return len(self.image_paths)
