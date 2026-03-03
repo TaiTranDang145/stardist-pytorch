@@ -27,3 +27,6 @@ dist/
 
 # MacOS
 .DS_Store
+
+# Official StarDist Repository
+stardist/

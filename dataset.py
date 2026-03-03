@@ -9,8 +9,6 @@ import threading
 from scipy.ndimage import maximum_filter
 from utils import fill_label_holes, edt_prob, star_dist
 
-# Giả sử bạn đã có 3 hàm này trong file utils.py
-# from utils import fill_label_holes, edt_prob, star_dist
 
 class StarDistDataset2D(Dataset):
     """
@@ -32,6 +30,7 @@ class StarDistDataset2D(Dataset):
         normalize=True,       # normalize image về [0,1]
         cache_valid_inds=True,
         maxfilter_patch_size=None,
+        grid=(1, 1),
     ):
         assert len(image_paths) == len(mask_paths), "Số lượng ảnh và mask phải bằng nhau"
         self.image_paths = image_paths
@@ -49,9 +48,9 @@ class StarDistDataset2D(Dataset):
         # Cache valid indices
         self._ind_cache_fg = {}
         self._ind_cache_all = {}
-        # Grid mặc định (1,1) như bạn yêu cầu
-        self.grid = (1, 1)
-        self.ss_grid = (slice(None),) + tuple(slice(0, None, g) for g in self.grid)
+        # Grid chuyển xuống __getitem__
+        self.grid = tuple(grid)
+        self.ss_grid = tuple(slice(0, None, g) for g in self.grid)
 
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -149,7 +148,11 @@ class StarDistDataset2D(Dataset):
 
         # Normalize
         if self.normalize:
-            img_patch = (img_patch - img_patch.min()) / (img_patch.max() - img_patch.min() + 1e-8)
+            # Paper suggests 1st and 99th percentiles for robustness
+            pmin = np.percentile(img_patch, 1)
+            pmax = np.percentile(img_patch, 99)
+            img_patch = (img_patch - pmin) / (pmax - pmin + 1e-8)
+            img_patch = np.clip(img_patch, 0, 1)
 
         # Tính prob & dist (trên patch đã pad đúng size)
         prob = edt_prob(mask_patch)
@@ -160,6 +163,14 @@ class StarDistDataset2D(Dataset):
 
         # To torch
         img_t = torch.from_numpy(img_patch).permute(2, 0, 1).float()
+        
+        # Downsample labels if grid > 1
+        if any(g > 1 for g in self.grid):
+            prob = prob[self.ss_grid]
+            dist = dist[self.ss_grid]
+            dist_mask = dist_mask[self.ss_grid]
+            dist_and_mask = np.concatenate([dist, dist_mask[..., None]], axis=-1)
+
         prob_t = torch.from_numpy(prob[..., None]).permute(2, 0, 1).float()
         dist_and_mask_t = torch.from_numpy(dist_and_mask).permute(2, 0, 1).float()
 
@@ -174,7 +185,7 @@ def custom_collate(batch):
     )
 
 
-# ====================== Hàm tạo DataLoader ======================
+# Hàm tạo DataLoader
 def create_dataloaders(
     root_dir="data/dsb2018/train/",
     patch_size=(256, 256),
@@ -182,7 +193,7 @@ def create_dataloaders(
     foreground_prob=0.9,
     num_workers=0,
     pin_memory=True,
-    val_split_ratio=0.2,  # nếu bạn muốn tự split, nhưng bạn nói đã chia sẵn nên có thể bỏ
+    val_split_ratio=0.2,
 ):
     image_paths = sorted(glob.glob(os.path.join(root_dir, "images/*.tif")))
     mask_paths = sorted(glob.glob(os.path.join(root_dir, "masks/*.tif")))
@@ -196,12 +207,11 @@ def create_dataloaders(
         patch_size=patch_size,
         n_rays=32,
         foreground_prob=foreground_prob,
-        augmenter=augmenter,  # hàm bạn đã cung cấp
+        augmenter=augmenter, 
         normalize=True,
+        grid=(1, 1),
     )
 
-    # Nếu bạn đã có split sẵn (train/test folder riêng), thì tạo 2 dataset
-    # Còn nếu muốn random split trong dataset này:
     train_size = int((1 - val_split_ratio) * len(dataset))
     val_size = len(dataset) - train_size
     train_ds, val_ds = random_split(dataset, [train_size, val_size])
@@ -227,7 +237,7 @@ def create_dataloaders(
     return train_loader, val_loader
 
 
-# ====================== Hàm augmenter của bạn (đã copy) ======================
+# Hàm augmenter
 def random_fliprot(img, mask):
     assert img.ndim >= mask.ndim
     axes = tuple(range(mask.ndim))

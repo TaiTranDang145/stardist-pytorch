@@ -5,7 +5,7 @@ from scipy.optimize import linear_sum_assignment
 from skimage.measure import regionprops
 from collections import namedtuple
 
-# ====================== Các hàm phụ trợ từ code gốc ======================
+# Các hàm phụ trợ từ code gốc
 
 def _check_label_array(y, name=None, check_sequential=False):
     err = ValueError(f"{name or 'labels'} must be an array of non-negative integers.")
@@ -49,7 +49,7 @@ def intersection_over_union(overlap):
 
 def matching(y_true, y_pred, thresh=0.5, criterion='iou', report_matches=False):
     """
-    Tính metrics giữa ground truth và prediction labels (sát gốc)
+    Tính metrics giữa ground truth và prediction labels
     """
     _check_label_array(y_true, 'y_true', True)
     _check_label_array(y_pred, 'y_pred', True)
@@ -124,7 +124,7 @@ def evaluate_dataset(y_true_list, y_pred_list, thresh=0.5, criterion='iou', show
     # Tính trung bình
     n_images = len(stats_list)
     avg_stats = {}
-    for key in ['fp', 'tp', 'fn', 'n_true', 'n_pred', 'mean_true_score', 'mean_matched_score', 'panoptic_quality']:
+    for key in ['fp', 'tp', 'fn', 'n_true', 'n_pred', 'mean_true_score', 'mean_matched_score', 'panoptic_quality', 'accuracy']:
         avg_stats[key] = np.mean([s._asdict()[key] for s in stats_list])
 
     avg_stats['precision'] = avg_stats['tp'] / (avg_stats['tp'] + avg_stats['fp']) if (avg_stats['tp'] + avg_stats['fp']) > 0 else 0.0
@@ -136,7 +136,7 @@ def evaluate_dataset(y_true_list, y_pred_list, thresh=0.5, criterion='iou', show
     return namedtuple('DatasetEvaluation', avg_stats.keys())(*avg_stats.values())
 
 
-# ====================== Test đánh giá đơn giản ======================
+# Test đánh giá đơn giản
 if __name__ == "__main__":
     # Giả lập ground truth và prediction (labels instance)
     y_true = np.zeros((256, 256), dtype=np.int32)

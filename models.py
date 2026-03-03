@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# ================= Double Conv =================
+# Double Conv
 class DoubleConv(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
@@ -20,7 +20,7 @@ class DoubleConv(nn.Module):
         return self.block(x)
 
 
-# ================= StarDist2D =================
+# StarDist2D
 class StarDist2D(nn.Module):
     def __init__(
         self,
@@ -35,11 +35,30 @@ class StarDist2D(nn.Module):
         self.n_rays = n_rays
         self.grid = grid
 
-        # -------- Encoder --------
+        # Grid pooling (tiền xử lý nếu grid > 1)
+        self.input_pooling = nn.Identity()
+        if any(g > 1 for g in grid):
+            pooling_layers = []
+            curr_grid = np.array([1, 1])
+            target_grid = np.array(grid)
+            in_c = n_channels_in
+            while not np.all(curr_grid == target_grid):
+                pool_size = (1 + (target_grid > curr_grid)).tolist()
+                curr_grid *= pool_size
+                # Thêm conv để feature alignment như bản gốc
+                pooling_layers.append(nn.Conv2d(in_c, unet_n_filter_base, 3, padding=1))
+                pooling_layers.append(nn.ReLU(inplace=True))
+                pooling_layers.append(nn.MaxPool2d(pool_size))
+                in_c = unet_n_filter_base
+            self.input_pooling = nn.Sequential(*pooling_layers)
+            in_ch = unet_n_filter_base
+        else:
+            in_ch = n_channels_in
+
+        # Encoder
         self.down_blocks = nn.ModuleList()
         self.pools = nn.ModuleList()
 
-        in_ch = n_channels_in
         out_ch = unet_n_filter_base
 
         for _ in range(unet_n_depth):
@@ -48,10 +67,10 @@ class StarDist2D(nn.Module):
             in_ch = out_ch
             out_ch *= 2
 
-        # -------- Bottleneck --------
+        # Bottleneck
         self.bottleneck = DoubleConv(in_ch, out_ch)
 
-        # -------- Decoder --------
+        # Decoder
         self.up_transpose = nn.ModuleList()
         self.up_blocks = nn.ModuleList()
 
@@ -64,7 +83,7 @@ class StarDist2D(nn.Module):
             )
             out_ch //= 2
 
-        # -------- Extra Conv --------
+        # Extra Conv
         if net_conv_after_unet > 0:
             self.features = nn.Sequential(
                 nn.Conv2d(out_ch, net_conv_after_unet, 3, padding=1),
@@ -75,7 +94,7 @@ class StarDist2D(nn.Module):
             self.features = nn.Identity()
             final_ch = out_ch
 
-        # -------- Heads --------
+        # Heads
         self.prob_head = nn.Sequential(
             nn.Conv2d(final_ch, 1, 1),
             nn.Sigmoid()
@@ -84,8 +103,10 @@ class StarDist2D(nn.Module):
         self.dist_head = nn.Conv2d(final_ch, n_rays, 1)
 
     def forward(self, x):
+        # Grid pooling
+        x = self.input_pooling(x)
 
-        # -------- Encoder --------
+        # Encoder
         skips = []
 
         for down, pool in zip(self.down_blocks, self.pools):
@@ -93,10 +114,10 @@ class StarDist2D(nn.Module):
             skips.append(x)
             x = pool(x)
 
-        # -------- Bottleneck --------
+        # Bottleneck
         x = self.bottleneck(x)
 
-        # -------- Decoder --------
+        # Decoder
         for up_trans, up_block, skip in zip(
             self.up_transpose,
             self.up_blocks,
@@ -113,17 +134,17 @@ class StarDist2D(nn.Module):
             x = torch.cat([skip, x], dim=1)
             x = up_block(x)
 
-        # -------- Feature --------
+        # Feature
         feat = self.features(x)
 
-        # -------- Heads --------
+        # Heads
         prob = self.prob_head(feat)
         dist = self.dist_head(feat)
 
         return prob, dist
 
 
-# ====================== Test ======================
+# Test
 if __name__ == "__main__":
     model = StarDist2D(n_channels_in=1, n_rays=32)
     dummy = torch.randn(2, 1, 256, 256)

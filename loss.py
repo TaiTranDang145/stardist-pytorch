@@ -98,7 +98,7 @@ def kld_metric(y_true, y_pred):
     return bce_pred - bce_true
 
 
-# ====================== Tổng loss (dùng trong training) ======================
+#Tổng loss
 def total_loss(prob_pred, dist_pred, prob_gt, dist_mask_gt, loss_weights=(1.0, 0.2)):
     """
     Tổng loss = w1 * prob_loss + w2 * dist_loss

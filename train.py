@@ -8,12 +8,9 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import numpy as np
 
-# Import các phần bạn đã có
 from dataset import create_dataloaders, StarDistDataset2D, augmenter
 from models import StarDist2D
 from loss import total_loss, kld_metric
-
-# ====================== Config training (sát với Config2D gốc) ======================
 class TrainConfig:
     epochs = 50                  # Tăng lên 400 epochs để hội tụ tốt hơn
     steps_per_epoch = 100          # train_steps_per_epoch gốc
@@ -28,13 +25,13 @@ class TrainConfig:
     log_dir = "tensorboard_logs"
     checkpoint_interval = 20       # save mỗi 50 epoch
     early_stop_patience = 40       # tương đương patience trong ReduceLR
+    resume = True                  # Tự động load checkpoint nếu có
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def train():
     config = TrainConfig()
 
-    # Tạo thư mục và xóa log cũ
     if os.path.exists(config.log_dir):
         import shutil
         shutil.rmtree(config.log_dir)
@@ -65,6 +62,14 @@ def train():
         unet_n_filter_base=32,
         net_conv_after_unet=128,
     ).to(config.device)
+    
+    # LOAD CHECKPOINT (RESUME)
+    checkpoint_path = os.path.join(config.save_dir, "best_model.pth")
+    if config.resume and os.path.exists(checkpoint_path):
+        model.load_state_dict(torch.load(checkpoint_path, map_location=config.device))
+        print(f"→ Đã load checkpoint từ {checkpoint_path} để tiếp tục train.")
+    elif config.resume:
+        print("→ Không tìm thấy checkpoint cũ, bắt đầu train mới.")
 
     # Optimizer & Scheduler (ReduceLROnPlateau như gốc)
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
@@ -72,7 +77,7 @@ def train():
         optimizer,
         mode='min',
         factor=0.5,
-        patience=40,           # giống train_reduce_lr gốc
+        patience=40,           
         min_lr=1e-7
     )
 
@@ -84,7 +89,7 @@ def train():
     for epoch in range(1, config.epochs + 1):
         start_time = time.time()
 
-        # Train một epoch (steps_per_epoch giới hạn nếu cần)
+        # Train một epoch
         model.train()
         train_loss = 0.0
         train_kld = 0.0
@@ -121,7 +126,8 @@ def train():
         train_loss /= train_steps
         train_kld /= train_steps
 
-        # Validation (full val loader)
+        # Validation
+        
         model.eval()
         val_loss = 0.0
         val_kld = 0.0
