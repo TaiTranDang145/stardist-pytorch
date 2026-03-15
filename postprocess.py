@@ -6,8 +6,6 @@ from skimage.segmentation import clear_border
 from models import StarDist2D
 from skimage.draw import polygon
 
-# Giả sử bạn đã có các hàm phụ trợ này (từ utils hoặc tự implement)
-# Nếu chưa có, mình sẽ bổ sung sau
 def ray_angles(n_rays=32):
     return np.linspace(0, 2 * np.pi, n_rays, endpoint=False)
 
@@ -23,7 +21,7 @@ def dist_to_coord(dist, points, scale_dist=(1, 1)):
     phis = ray_angles(n_rays)
     
     # coord[..., 0, :] là Y (row), coord[..., 1, :] là X (col)
-    # Sát với paper: Y = center_Y + rho * sin(phi), X = center_X + rho * cos(phi)
+    #Y = center_Y + rho * sin(phi), X = center_X + rho * cos(phi)
     coord = (dist[:, np.newaxis] * np.array([np.sin(phis), np.cos(phis)])).astype(np.float32)
     coord *= np.asarray(scale_dist).reshape(1, 2, 1)
     coord += points[..., np.newaxis]
@@ -38,8 +36,6 @@ def polygons_to_label(dist, points, shape, prob=None, prob_thresh=0.5, scale_dis
     points = np.asarray(points)
     prob = np.ones(len(points)) if prob is None else np.asarray(prob)
 
-    # Lọc & Sắp xếp theo score tăng dần (để polygon cao hơn đè lên sau)
-    # Hoặc sort giảm dần và render id cố định (official dùng sort stable)
     ind = prob > prob_thresh
     points = points[ind]
     dist = dist[ind]
@@ -153,8 +149,6 @@ def inference(model, image, prob_thresh=0.5, nms_thresh=0.5, device='cuda'):
         if image.ndim == 2:
             image = image[..., None]
         
-        # Tiền xử lý đơn giản (nên trùng với dataset.py)
-        # Ở đây giả sử ảnh đã được normalized hoặc dùng 1/99 percentile như dataset
         pmin = np.percentile(image, 1)
         pmax = np.percentile(image, 99)
         img_norm = (image - pmin) / (pmax - pmin + 1e-8)

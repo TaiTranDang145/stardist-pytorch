@@ -134,7 +134,7 @@ class StarDistDataset2D(Dataset):
         img_patch = img[y_start:y_end, x_start:x_end]
         mask_patch = mask[y_start:y_end, x_start:x_end]
 
-        # Pad nếu patch nhỏ hơn patch_size (rất quan trọng!)
+        
         pad_h = ph - img_patch.shape[0]
         pad_w = pw - img_patch.shape[1]
         if pad_h > 0 or pad_w > 0:

@@ -8,15 +8,11 @@ from collections import Counter
 
 def get_image_sizes(image_dir):
     pairs = []
-    # Search for common image extensions
-    image_paths = glob(os.path.join(image_dir, "*.png")) + \
-                  glob(os.path.join(image_dir, "*.tif")) + \
-                  glob(os.path.join(image_dir, "*.jpg"))
+    image_paths = glob(os.path.join(image_dir, "*.tif"))
     
     for path in image_paths:
         with Image.open(path) as img:
             w, h = img.size
-            # Keep as a string "WxH" for easier counting/plotting
             pairs.append(f"{w}x{h}")
     return pairs
 

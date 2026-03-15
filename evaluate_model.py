@@ -10,11 +10,12 @@ from evaluate import evaluate_dataset
 
 class EvalConfig:
     checkpoint_path = "checkpoints/best_model.pth"
-    data_dir = "data/dsb2018/train/" # Dùng val split từ đây hoặc test set nếu có
+    data_dir = "data/dsb2018/test/" 
     n_rays = 32
     grid = (1, 1)
     prob_thresh = 0.5
     nms_thresh = 0.3
+    taus = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def evaluate():
@@ -36,14 +37,14 @@ def evaluate():
     image_paths = sorted(glob.glob(os.path.join(config.data_dir, "images/*.tif")))
     mask_paths = sorted(glob.glob(os.path.join(config.data_dir, "masks/*.tif")))
     
-    # Giới hạn số lượng ảnh đánh giá nếu muốn nhanh (ví dụ 20 ảnh đầu)
-    image_paths = image_paths[:20]
-    mask_paths = mask_paths[:20]
+    if len(image_paths) == 0:
+        print(f"Lỗi: Không tìm thấy ảnh trong {config.data_dir}")
+        return
 
     y_true_list = []
     y_pred_list = []
 
-    print(f"Đang chạy inference trên {len(image_paths)} ảnh...")
+    print(f"Đang chạy inference trên toàn bộ {len(image_paths)} ảnh của bộ TEST...")
     for img_path, mask_path in tqdm(zip(image_paths, mask_paths), total=len(image_paths)):
         img = tifffile.imread(img_path)
         gt_mask = tifffile.imread(mask_path)
@@ -59,20 +60,16 @@ def evaluate():
         y_true_list.append(gt_mask)
         y_pred_list.append(pred_labels)
 
-    # 3. Chạy Evaluate
-    print("\nĐang tính toán metrics (AP, F1, PQ)...")
-    results = evaluate_dataset(y_true_list, y_pred_list, thresh=0.5)
+    # 3. Chạy Evaluate trên nhiều ngưỡng
+    print("\n" + "="*80)
+    print(f"{'Threshold':<10} | {'PQ':<10} | {'Accuracy':<10} | {'F1':<10} | {'Prec':<10} | {'Recall':<10}")
+    print("-" * 80)
     
-    print("\n" + "="*30)
-    print("KẾT QUẢ ĐÁNH GIÁ (IoU threshold = 0.5)")
-    print("="*30)
-    print(f"Precision:         {results.precision:.4f}")
-    print(f"Recall:            {results.recall:.4f}")
-    print(f"F1 Score:          {results.f1:.4f}")
-    print(f"Accuracy:          {results.accuracy:.4f}")
-    print(f"Panoptic Quality:  {results.panoptic_quality:.4f}")
-    print(f"Mean Matching IoU: {results.mean_matched_score:.4f}")
-    print("="*30)
+    for t in config.taus:
+        results = evaluate_dataset(y_true_list, y_pred_list, thresh=t, show_progress=False)
+        print(f"{t:<10.2f} | {results.panoptic_quality:<10.4f} | {results.accuracy:<10.4f} | {results.f1:<10.4f} | {results.precision:<10.4f} | {results.recall:<10.4f}")
+    
+    print("="*80)
 
 if __name__ == "__main__":
     evaluate()

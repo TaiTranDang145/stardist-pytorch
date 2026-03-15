@@ -12,7 +12,7 @@ from dataset import create_dataloaders, StarDistDataset2D, augmenter
 from models import StarDist2D
 from loss import total_loss, kld_metric
 class TrainConfig:
-    epochs = 50                  # Tăng lên 400 epochs để hội tụ tốt hơn
+    epochs = 100                  # Tăng lên 100 epochs để hội tụ tốt hơn
     steps_per_epoch = 100          # train_steps_per_epoch gốc
     batch_size = 16               # Tăng lên 16 cho RTX 4060
     learning_rate = 0.0003         # train_learning_rate gốc

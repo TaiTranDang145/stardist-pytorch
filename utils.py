@@ -104,7 +104,7 @@ def edt_prob(lbl_img: np.ndarray, anisotropy=None) -> np.ndarray:
 
 
 def _py_star_dist_demo(a, n_rays=32, grid=(1, 1)):
-    """Phiên bản Python của star_dist (chỉ dùng để demo/tham khảo)"""
+    """Phiên bản Python của star_dist"""
     if not (np.isscalar(n_rays) and 0 < int(n_rays)):
         raise ValueError("n_rays must be a positive integer")
     if grid != (1, 1):
