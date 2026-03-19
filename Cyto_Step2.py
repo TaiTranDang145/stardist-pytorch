@@ -21,18 +21,19 @@ parser.add_argument('--Num_TCN', type=int, default=6)
 parser.add_argument('--Num_Run', type=int, default=20)
 parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--lr', type=float, default=0.001)
+parser.add_argument('--loss_cutoff', type=float, default=0.5)
 parser.add_argument('--device', type=str, default='cuda')
 args = parser.parse_args()
 
 
 ## Hyperparameters
-LastStep_OutputFolderName = os.path.join(args.graph_dir, "")
+LastStep_OutputFolderName = os.path.join(os.path.expanduser(args.graph_dir), "")
 Num_TCN = args.Num_TCN
 Num_Run = args.Num_Run
 Num_Epoch = args.epochs
 Embedding_Dimension = 128
 Learning_Rate = args.lr
-Loss_Cutoff = -0.6
+Loss_Cutoff = args.loss_cutoff
 device_name = args.device
 
 
