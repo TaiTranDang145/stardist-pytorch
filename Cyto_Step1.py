@@ -36,6 +36,9 @@ if os.path.exists(ThisStep_OutputFolderName):
     shutil.rmtree(ThisStep_OutputFolderName)
 os.makedirs(ThisStep_OutputFolderName, exist_ok=True)
 
+# Copy ImageNameList.txt to output folder to ensure consistent order in Step 2
+shutil.copy2(Region_filename, os.path.join(ThisStep_OutputFolderName, "ImageNameList.txt"))
+
 print(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 print("Constructing topology structures of KNN graphs...")
 for graph_index in range(0, len(region_name_list)):

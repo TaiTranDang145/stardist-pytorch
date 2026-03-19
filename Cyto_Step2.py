@@ -37,15 +37,21 @@ device_name = args.device
 
 
 ## Import image name list.
-# We need the original input folder for the list, parsing it via assumptions that it was copied together,
-# or we can read it from MaxNumNodes and UniqueCellTypeList locations if needed.
-# Since Step1 placed things in output_graphs, let's see if ImageNameList is copied there.
-# It's better to read the ImageNameList.txt from final_input_for_cyto, which is not passed. 
-# Alternatively, we can find out the list from the Step1 output files (*_EdgeIndex.txt).
-import glob
-edge_index_files = glob.glob(os.path.join(LastStep_OutputFolderName, "*_EdgeIndex.txt"))
-region_names = [os.path.basename(f).replace("_EdgeIndex.txt", "") for f in edge_index_files]
-region_name_list = pd.DataFrame({"Image": region_names})
+# We read the ImageNameList.txt copied to the graph_dir by Step 1 to ensure indices match.
+Region_filename = os.path.join(LastStep_OutputFolderName, "ImageNameList.txt")
+if not os.path.exists(Region_filename):
+    print(f"Cảnh báo: Không tìm thấy {Region_filename}. Thử lấy từ glob (có thể sai thứ tự).")
+    import glob
+    edge_index_files = glob.glob(os.path.join(LastStep_OutputFolderName, "*_EdgeIndex.txt"))
+    region_names = [os.path.basename(f).replace("_EdgeIndex.txt", "") for f in edge_index_files]
+    region_name_list = pd.DataFrame({"Image": region_names})
+else:
+    region_name_list = pd.read_csv(
+        Region_filename,
+        sep="\t",  # tab-separated
+        header=None,  # no heading row
+        names=["Image"],  # set our own names for the columns
+    )
 
 
 ## Load dataset from the constructed Dataset.
@@ -156,15 +162,20 @@ for graph_index, row in region_name_list.iterrows():
                 f0_csv = csv.writer(f0)
                 f0_csv.writerow([epoch, train_loss])
             
+            # Thêm log để bạn thấy nó vẫn đang chạy
+            if epoch % 100 == 0:
+                print(f"  -> Epoch {epoch:03d}/{Num_Epoch}: Loss = {train_loss:.4f}")
+            
             if train_loss == 0 and train_loss == previous_loss:
                 break
             else:
                 previous_loss = train_loss
 
-        # print(f"Final train loss is {train_loss:.4f}")
+        print(f"    Kết thúc Run này với Loss = {train_loss:.4f}")
         if train_loss >= Loss_Cutoff:   #This is an empirical cutoff of the final loss to avoid underfitting.
-            shutil.rmtree(RunFolderName)  #Remove the specific folder and all files inside it for re-creating the Run folder.
-            continue  #restart this run.
+             print(f"    [!] Loss {train_loss:.4f} chưa đạt yêu cầu (< {Loss_Cutoff}). Đang Restart lại Run này...")
+             shutil.rmtree(RunFolderName)  #Remove the specific folder and all files inside it for re-creating the Run folder.
+             continue  #restart this run.
 
         #Extract the soft TCN assignment matrix using the trained model.
         for EachData in all_sample_loader:
