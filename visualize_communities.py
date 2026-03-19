@@ -33,12 +33,13 @@ def find_best_run(step2_output_dir):
                 
     return best_run
 
-def visualize_communities(input_dir, output_tcn_dir, output_viz_dir):
+def visualize_communities(input_dir, output_tcn_dir, graph_dir, output_viz_dir, image_dir=None):
     """
-    Đọc kết quả TCN và vẽ bản đồ không gian các cộng đồng tế bào.
+    Đọc kết quả TCN và vẽ bản đồ không gian các cộng đồng tế bào, bao gồm ảnh nền và các liên kết.
     """
     input_dir = Path(input_dir)
     output_tcn_dir = Path(output_tcn_dir)
+    graph_dir = Path(graph_dir)
     output_viz_dir = Path(output_viz_dir)
     output_viz_dir.mkdir(parents=True, exist_ok=True)
     
@@ -71,67 +72,93 @@ def visualize_communities(input_dir, output_tcn_dir, output_viz_dir):
             print(f"  -> Lỗi: Không tìm thấy TCN_AssignMatrix1.csv tại {best_run}. Bỏ qua.")
             continue
             
-        # Ma trận có kích thước (N_cells, N_communities)
         assign_matrix = np.loadtxt(assign_file, delimiter=',')
-        
-        # Lấy nhãn cụm bằng argmax
-        if assign_matrix.ndim == 1: # Trường hợp chỉ có 1 cell? 
+        if assign_matrix.ndim == 1:
             communities = np.argmax(assign_matrix)
             communities = np.array([communities])
         else:
             communities = np.argmax(assign_matrix, axis=1)
             
-        # 3. Đọc Coordinates tương ứng
+        # 3. Đọc Coordinates
         coord_file = input_dir / f"{image_name}_Coordinates.txt"
         if not coord_file.exists():
-            print(f"  -> Lỗi: Không tìm thấy file tọa độ {coord_file.name} trong thư mục input. Bỏ qua.")
+            print(f"  -> Lỗi: Không tìm thấy file tọa độ {coord_file.name}. Bỏ qua.")
             continue
-            
-        # Tọa độ (x, y)
         coords = np.loadtxt(coord_file, delimiter='\t')
         
-        # Đảm bảo số lượng cell khớp nhau
-        if len(coords) != len(communities):
-            print(f"  -> Lỗi: Số lượng cell không khớp! Coords: {len(coords)}, Matrix: {len(communities)}")
-            continue
-            
-        # 4. Vẽ biểu đồ
-        plt.figure(figsize=(10, 8))
+        # 4. Đọc Edges từ Step 1
+        edge_file = graph_dir / f"{image_name}_EdgeIndex.txt"
+        edges = None
+        if edge_file.exists():
+            edges = np.loadtxt(edge_file, dtype=int, delimiter='\t')
+        else:
+            print(f"  -> Cảnh báo: Không tìm thấy file liên kết {edge_file.name}. Sẽ không vẽ các đường nối.")
+
+        # 5. Vẽ biểu đồ
+        fig, ax = plt.subplots(figsize=(10, 10))
         
-        # Sử dụng colormap để phân biệt các cộng đồng (communities)
-        scatter = plt.scatter(coords[:, 0], coords[:, 1], c=communities, cmap='tab20', s=20, alpha=0.9)
+        # Thử nạp ảnh nền nếu có
+        if image_dir:
+            from skimage.io import imread
+            # Tìm ảnh (thử các đuôi phổ biến)
+            img = None
+            for ext in ['.png', '.tif', '.tiff', '.jpg']:
+                img_path = Path(image_dir) / f"{image_name}{ext}"
+                if img_path.exists():
+                    img = imread(img_path)
+                    break
+            if img is not None:
+                ax.imshow(img, alpha=0.5) # Vẽ ảnh mờ đi một chút để nổi bật tế bào
+
+        # Vẽ các liên kết (Edges)
+        if edges is not None:
+            for edge in edges:
+                u, v = edge
+                # Lấy tọa độ (x, y) của 2 node
+                pos_u = coords[u]
+                pos_v = coords[v]
+                ax.plot([pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], 
+                        color='gray', linewidth=0.5, alpha=0.3, zorder=1)
+
+        # Vẽ tế bào
+        scatter = ax.scatter(coords[:, 0], coords[:, 1], c=communities, 
+                             cmap='tab20', s=40, edgecolors='black', linewidths=0.5, zorder=2)
         
-        plt.colorbar(scatter, label='Community ID')
-        plt.title(f"Spatial Communities (TCN Clusters)\nImage: {image_name}")
-        plt.xlabel("X Coordinate")
-        plt.ylabel("Y Coordinate")
+        plt.colorbar(scatter, ax=ax, label='Community ID')
+        ax.set_title(f"Spatial Communities (TCN Clusters)\nImage: {image_name}")
+        ax.set_xlabel("X Coordinate")
+        ax.set_ylabel("Y Coordinate")
         
-        # Đảo ngược trục Y vì tọa độ ảnh gốc nằm góc trái trên
-        plt.gca().invert_yaxis()
-        plt.axis('equal')
+        # Nếu không có ảnh nền thì đảo ngược trục Y cho đúng hệ tọa độ ảnh
+        if img is None:
+            ax.invert_yaxis()
+        
+        ax.axis('equal')
         
         # Lưu kết quả
-        output_path = output_viz_dir / f"{image_name}_communities.png"
+        output_path = output_viz_dir / f"{image_name}_communities_rich.png"
         plt.savefig(output_path, bbox_inches='tight', dpi=150)
         plt.close()
         
-        print(f"  -> Đã lưu bản đồ cộng đồng: {output_path.name}")
+        print(f"  -> Đã lưu bản đồ phong phú: {output_path.name}")
         success_count += 1
         
     print(f"\nHoàn tất! Đã tạo thành công {success_count} bản đồ cộng đồng tế bào.")
-    print(f"Kết quả được lưu tại: {output_viz_dir.absolute()}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Visualize CytoCommunity TCN Results.')
-    parser.add_argument('--input_dir', type=str, required=True, help='Thư mục chứa *_Coordinates.txt (ví dụ: final_input_for_cyto)')
-    parser.add_argument('--output_tcn_dir', type=str, required=True, help='Thư mục chứa kết quả từ Step 2 (ví dụ: ~/CytoCommunity/output_TCN)')
-    parser.add_argument('--output_viz_dir', type=str, default='output/communities', help='Thư mục lưu hình ảnh visualization')
+    parser = argparse.ArgumentParser(description='Visualize CytoCommunity TCN Results with Background & Edges.')
+    parser.add_argument('--input_dir', type=str, required=True, help='Thư mục chứa *_Coordinates.txt')
+    parser.add_argument('--output_tcn_dir', type=str, required=True, help='Thư mục chứa kết quả từ Step 2')
+    parser.add_argument('--graph_dir', type=str, required=True, help='Thư mục chứa *_EdgeIndex.txt từ Step 1')
+    parser.add_argument('--image_dir', type=str, default=None, help='(Tùy chọn) Thư mục chứa ảnh gốc (.png, .tif)')
+    parser.add_argument('--output_viz_dir', type=str, default='output/communities', help='Thư mục lưu hình ảnh')
     
     args = parser.parse_args()
     
-    # Mở rộng path người dùng (tilde ~)
-    target_input_dir = os.path.expanduser(args.input_dir)
-    target_output_tcn_dir = os.path.expanduser(args.output_tcn_dir)
-    target_output_viz_dir = os.path.expanduser(args.output_viz_dir)
-    
-    visualize_communities(target_input_dir, target_output_tcn_dir, target_output_viz_dir)
+    visualize_communities(
+        os.path.expanduser(args.input_dir),
+        os.path.expanduser(args.output_tcn_dir),
+        os.path.expanduser(args.graph_dir),
+        os.path.expanduser(args.output_viz_dir),
+        os.path.expanduser(args.image_dir) if args.image_dir else None
+    )
