@@ -94,27 +94,30 @@ def visualize_communities(input_dir, output_tcn_dir, graph_dir, output_viz_dir, 
         else:
             print(f"  -> Cảnh báo: Không tìm thấy file liên kết {edge_file.name}. Sẽ không vẽ các đường nối.")
 
-        # 5. Vẽ biểu đồ
+        # 5. Vẽ biểu đồ Phóng đại (Rich Visualization: Edges + Points + Image)
         fig, ax = plt.subplots(figsize=(10, 10))
         
         # Thử nạp ảnh nền nếu có
+        img = None
+        img_shape = None
         if image_dir:
             from skimage.io import imread
-            # Tìm ảnh (thử các đuôi phổ biến)
-            img = None
-            for ext in ['.png', '.tif', '.tiff', '.jpg']:
+            for ext in ['.png', '.tif', '.tiff', '.jpg', '.jpeg', '.PNG', '.TIF']:
                 img_path = Path(image_dir) / f"{image_name}{ext}"
                 if img_path.exists():
                     img = imread(img_path)
+                    img_shape = img.shape[:2]
                     break
+            
             if img is not None:
-                ax.imshow(img, alpha=0.5) # Vẽ ảnh mờ đi một chút để nổi bật tế bào
+                ax.imshow(img, alpha=0.5) 
+            else:
+                print(f"  -> Cảnh báo: Không tìm thấy file ảnh gốc cho {image_name} trong {image_dir}")
 
         # Vẽ các liên kết (Edges)
         if edges is not None:
             for edge in edges:
                 u, v = edge
-                # Lấy tọa độ (x, y) của 2 node
                 pos_u = coords[u]
                 pos_v = coords[v]
                 ax.plot([pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], 
@@ -128,19 +131,48 @@ def visualize_communities(input_dir, output_tcn_dir, graph_dir, output_viz_dir, 
         ax.set_title(f"Spatial Communities (TCN Clusters)\nImage: {image_name}")
         ax.set_xlabel("X Coordinate")
         ax.set_ylabel("Y Coordinate")
-        
-        # Nếu không có ảnh nền thì đảo ngược trục Y cho đúng hệ tọa độ ảnh
-        if img is None:
-            ax.invert_yaxis()
-        
+        if img is None: ax.invert_yaxis()
         ax.axis('equal')
         
-        # Lưu kết quả
-        output_path = output_viz_dir / f"{image_name}_communities_rich.png"
+        output_path = output_viz_dir / f"{image_name}_rich_view.png"
         plt.savefig(output_path, bbox_inches='tight', dpi=150)
         plt.close()
         
-        print(f"  -> Đã lưu bản đồ phong phú: {output_path.name}")
+        # 6. Vẽ TCN MAP (Dạng vùng màu - Territory Map theo Voronoi)
+        # Đây là dạng bản đồ giống Figure 1b trong bài báo
+        from scipy.spatial import Voronoi, voronoi_plot_2d
+        
+        if len(coords) >= 4: # Voronoi cần tối thiểu 4 điểm
+            fig_tcn, ax_tcn = plt.subplots(figsize=(10, 10))
+            vor = Voronoi(coords)
+            
+            # Tô màu các vùng Voronoi theo TCN ID
+            for i, region_idx in enumerate(vor.point_region):
+                region = vor.regions[region_idx]
+                if not -1 in region and len(region) > 0:
+                    polygon = [vor.vertices[i] for i in region]
+                    # Lấy màu từ colormap tab20 dựa trên community id
+                    color = plt.cm.tab20(communities[i] / 20.0) 
+                    ax_tcn.fill(*zip(*polygon), color=color, alpha=0.8)
+            
+            # Vẽ các điểm tế bào nhỏ lên trên
+            ax_tcn.scatter(coords[:, 0], coords[:, 1], c='black', s=2, alpha=0.5)
+            
+            if img_shape:
+                ax_tcn.set_xlim(0, img_shape[1])
+                ax_tcn.set_ylim(img_shape[0], 0)
+            else:
+                ax_tcn.set_xlim(coords[:,0].min()-20, coords[:,0].max()+20)
+                ax_tcn.set_ylim(coords[:,1].max()+20, coords[:,1].min()-20)
+                
+            ax_tcn.set_title(f"TCN Map (Neighborhood Territories)\nImage: {image_name}")
+            ax_tcn.set_aspect('equal')
+            
+            output_map_path = output_viz_dir / f"{image_name}_tcn_map.png"
+            plt.savefig(output_map_path, bbox_inches='tight', dpi=150)
+            plt.close()
+            print(f"  -> Đã lưu TCN Map: {output_map_path.name}")
+
         success_count += 1
         
     print(f"\nHoàn tất! Đã tạo thành công {success_count} bản đồ cộng đồng tế bào.")
