@@ -8,6 +8,7 @@ import tifffile
 import threading
 from scipy.ndimage import maximum_filter
 from utils import fill_label_holes, edt_prob, star_dist
+from fourier_utils import rays_to_fourier
 
 
 class StarDistDataset2D(Dataset):
@@ -31,6 +32,7 @@ class StarDistDataset2D(Dataset):
         cache_valid_inds=True,
         maxfilter_patch_size=None,
         grid=(1, 1),
+        n_harmonics=16,       # Số lượng hài Fourier
     ):
         assert len(image_paths) == len(mask_paths), "Số lượng ảnh và mask phải bằng nhau"
         self.image_paths = image_paths
@@ -41,6 +43,8 @@ class StarDistDataset2D(Dataset):
         self.augmenter = augmenter if augmenter is not None else lambda x, y: (x, y)
         self.normalize = normalize
         self.cache_valid_inds = cache_valid_inds
+        self.n_harmonics = n_harmonics
+        self.lock = threading.Lock()
 
         # maxfilter_patch_size để kiểm tra foreground
         self.maxfilter_patch_size = maxfilter_patch_size or self.patch_size
@@ -159,8 +163,30 @@ class StarDistDataset2D(Dataset):
         dist = star_dist(mask_patch, n_rays=self.n_rays)
         dist_mask = prob.copy()
 
-        dist_and_mask = np.concatenate([dist, dist_mask[..., None]], axis=-1)
+        # Tính Fourier coefficients từ dist
+        # dist: (H, W, n_rays)
+        coeffs = rays_to_fourier(dist, n_harmonics=self.n_harmonics)
+        # coeffs: (H, W, n_harmonics + 1) phức
+        # Chuyển thành thực bằng cách tách Real và Imag
+        coeffs_real = np.real(coeffs)
+        coeffs_imag = np.imag(coeffs)
+        fourier_gt = np.concatenate([coeffs_real, coeffs_imag], axis=-1)
 
+        # Tính Complexity GT: Tổng năng lượng các hài bậc cao (n > 2)
+        # Bậc cao là từ index 3 trở đi trong coeffs
+        if self.n_harmonics > 2:
+            high_freq_energy = np.sum(np.abs(coeffs[..., 3:])**2, axis=-1)
+            total_energy = np.sum(np.abs(coeffs)**2, axis=-1) + 1e-10
+            complexity_gt = high_freq_energy / total_energy
+            # Chuẩn hóa về [0, 1] (có thể dùng log hoặc sigmoid-like scaling)
+            complexity_gt = np.clip(complexity_gt * 10, 0, 1) # Giả sử 10% năng lượng cao là cực kỳ phức tạp
+        else:
+            complexity_gt = np.zeros_like(prob)
+        
+        # Thêm complexity vào fourier_gt tensor hoặc trả về riêng
+        fourier_gt = np.concatenate([fourier_gt, complexity_gt[..., None]], axis=-1)
+        dist_and_mask = np.concatenate([dist, dist_mask[..., None]], axis=-1)
+        
         # To torch
         img_t = torch.from_numpy(img_patch).permute(2, 0, 1).float()
         
@@ -169,19 +195,23 @@ class StarDistDataset2D(Dataset):
             prob = prob[self.ss_grid]
             dist = dist[self.ss_grid]
             dist_mask = dist_mask[self.ss_grid]
+            fourier_gt = fourier_gt[self.ss_grid]
             dist_and_mask = np.concatenate([dist, dist_mask[..., None]], axis=-1)
 
         prob_t = torch.from_numpy(prob[..., None]).permute(2, 0, 1).float()
         dist_and_mask_t = torch.from_numpy(dist_and_mask).permute(2, 0, 1).float()
+        fourier_t = torch.from_numpy(fourier_gt).permute(2, 0, 1).float()
 
-        return img_t, prob_t, dist_and_mask_t
+        return img_t, prob_t, dist_and_mask_t, fourier_t
+
 
 def custom_collate(batch):
-    images, probs, dist_masks = zip(*batch)
+    images, probs, dist_masks, fourier_coeffs = zip(*batch)
     return (
         torch.stack(images),
         torch.stack(probs),
-        torch.stack(dist_masks)
+        torch.stack(dist_masks),
+        torch.stack(fourier_coeffs)
     )
 
 
@@ -210,6 +240,7 @@ def create_dataloaders(
         augmenter=augmenter, 
         normalize=True,
         grid=(1, 1),
+        n_harmonics=16,
     )
 
     train_size = int((1 - val_split_ratio) * len(dataset))
@@ -260,6 +291,8 @@ def augmenter(x, y):
     sig = 0.02 * np.random.uniform(0, 1)
     x = x + sig * np.random.normal(0, 1, x.shape)
     return x, y
+
+
 if __name__ == "__main__":
     # Ví dụ chạy
     train_loader, val_loader = create_dataloaders(
@@ -270,9 +303,10 @@ if __name__ == "__main__":
     )
 
     # Lấy 1 batch
-    for images, probs, dist_masks in train_loader:
-        print(images.shape)         # torch.Size([8, 1 or 3, 256, 256])
-        print(probs.shape)          # torch.Size([8, 1, 256, 256])   # grid=1,1 nên bằng patch
-        print(dist_masks.shape)     # torch.Size([8, 33, 256, 256])  # 32 rays + 1 mask
+    for images, probs, dist_masks, fourier_coeffs in train_loader:
+        print(images.shape)         # torch.Size([8, 1, 256, 256])
+        print(probs.shape)          # torch.Size([8, 1, 256, 256])
+        print(dist_masks.shape)     # torch.Size([8, 33, 256, 256])
+        print(fourier_coeffs.shape) # torch.Size([8, 34, 256, 256])  # 2 * (16 + 1)
         break
     

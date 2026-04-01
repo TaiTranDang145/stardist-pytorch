@@ -4,33 +4,17 @@ import torch.nn.functional as F
 def generic_masked_loss(mask, loss_fn, weights=1.0, norm_by_mask=True, reg_weight=0.0, reg_penalty='abs'):
     """
     Wrapper loss masked chung (tương đương generic_masked_loss gốc).
-    
-    Args:
-        mask: torch.Tensor (B, H, W, 1) hoặc (B, H, W) - mask valid (1=valid, 0=ignore)
-        loss_fn: callable(y_true, y_pred) -> per-pixel loss
-        weights: float hoặc tensor, trọng số cho từng pixel
-        norm_by_mask: bool - có chuẩn hóa theo % valid pixels không
-        reg_weight: float - hệ số phạt background
-        reg_penalty: 'abs' hoặc 'square' - hàm phạt cho y_pred ở vùng mask=0
-    
-    Returns:
-        loss callable: (y_true, y_pred) -> scalar loss
     """
     def _loss(y_true, y_pred):
-        # Cast về float
-        # Sử dụng tên biến khác để tránh UnboundLocalError (shadowing closure variables)
         m = mask.float()
         w = torch.as_tensor(weights, device=y_true.device, dtype=torch.float32)
  
-        # Actual loss chỉ trên vùng mask=1
         per_pixel_loss = loss_fn(y_true, y_pred)
-        actual_loss = torch.mean(m * w * per_pixel_loss, dim=[1,2,3])  # mean theo spatial
+        actual_loss = torch.mean(m * w * per_pixel_loss, dim=[1,2,3])
  
-        # Normalize theo % valid pixels
         norm_mask = (torch.mean(m, dim=[1,2,3]) + 1e-8) if norm_by_mask else 1.0
         normalized_loss = actual_loss / norm_mask
  
-        # Background regularization (nếu reg_weight > 0)
         if reg_weight > 0:
             if reg_penalty == 'abs':
                 reg_fn = torch.abs
@@ -44,15 +28,12 @@ def generic_masked_loss(mask, loss_fn, weights=1.0, norm_by_mask=True, reg_weigh
         else:
             total_loss_val = normalized_loss
  
-        return total_loss_val.mean()  # mean theo batch
+        return total_loss_val.mean()
 
     return _loss
 
 
 def masked_mae_loss(mask, reg_weight=1e-4, norm_by_mask=True):
-    """
-    Masked MAE cho dist head (tương đương masked_loss_mae gốc)
-    """
     def mae_loss(y_true, y_pred):
         return torch.abs(y_true - y_pred)
 
@@ -62,16 +43,12 @@ def masked_mae_loss(mask, reg_weight=1e-4, norm_by_mask=True):
         weights=1.0,
         norm_by_mask=norm_by_mask,
         reg_weight=reg_weight,
-        reg_penalty='abs'   # gốc dùng K.abs
+        reg_penalty='abs'
     )
 
 
 def masked_bce_loss():
-    """
-    Masked BCE cho prob head (tương đương prob_loss gốc)
-    """
     def bce(y_true, y_pred):
-        # Mask ignore: y_true < 0
         valid_mask = (y_true >= 0).float()
         y_true = torch.clamp(y_true, 0.0, 1.0)
         y_pred = torch.clamp(y_pred, 1e-7, 1.0 - 1e-7)
@@ -84,10 +61,6 @@ def masked_bce_loss():
 
 
 def kld_metric(y_true, y_pred):
-    """
-    KL divergence metric cho prob head (tương đương kld gốc)
-    Dùng để theo dõi như paper, không phải loss chính
-    """
     valid_mask = (y_true >= 0)
     y_true_valid = torch.clamp(y_true[valid_mask], 1e-7, 1.0 - 1e-7)
     y_pred_valid = torch.clamp(y_pred[valid_mask], 1e-7, 1.0 - 1e-7)
@@ -98,27 +71,55 @@ def kld_metric(y_true, y_pred):
     return bce_pred - bce_true
 
 
+def masked_fourier_loss(mask):
+    def fourier_mae(y_true, y_pred):
+        return torch.abs(y_true - y_pred)
+
+    return generic_masked_loss(
+        mask=mask,
+        loss_fn=fourier_mae,
+        reg_weight=1e-4
+    )
+
+
+def complexity_loss_fn(mask):
+    def bce_loss(y_true, y_pred):
+        return F.binary_cross_entropy(y_pred, y_true, reduction='none')
+
+    return generic_masked_loss(
+        mask=mask,
+        loss_fn=bce_loss
+    )
+
+
 #Tổng loss
-def total_loss(prob_pred, dist_pred, prob_gt, dist_mask_gt, loss_weights=(1.0, 0.2)):
+def total_loss(prob_pred, dist_pred, fourier_pred, complexity_pred, 
+               prob_gt, dist_mask_gt, fourier_gt,
+               loss_weights=(1.0, 0.2, 0.2, 0.1)):
     """
-    Tổng loss = w1 * prob_loss + w2 * dist_loss
-    dist_mask_gt: (B, n_rays + 1, H, W) - kênh cuối là mask
+    Tổng loss = w1*prob + w2*dist + w3*fourier + w4*complexity
+    fourier_gt: (B, 2*(n_harmonics+1) + 1, H, W) -> kênh cuối là complexity
     """
     prob_loss_fn = masked_bce_loss()
     
-    # Kênh cuối của dist_mask_gt là mask (B, 1, H, W)
     mask = dist_mask_gt[:, -1:] 
-    # n_rays kênh đầu là ground truth distance (B, n_rays, H, W)
     dist_gt = dist_mask_gt[:, :-1]
 
-    dist_loss_fn = masked_mae_loss(
-        mask=mask,
-        reg_weight=1e-4,
-        norm_by_mask=True
-    )
+    comp_gt = fourier_gt[:, -1:]
+    f_gt = fourier_gt[:, :-1]
 
-    prob_loss = prob_loss_fn(prob_gt, prob_pred)
-    dist_loss = dist_loss_fn(dist_gt, dist_pred)
+    dist_loss_fn = masked_mae_loss(mask=mask)
+    fourier_loss_fn = masked_fourier_loss(mask=mask)
+    comp_loss_fn = complexity_loss_fn(mask=mask)
 
-    total = loss_weights[0] * prob_loss + loss_weights[1] * dist_loss
-    return total
+    p_loss = prob_loss_fn(prob_gt, prob_pred)
+    d_loss = dist_loss_fn(dist_gt, dist_pred)
+    f_loss = fourier_loss_fn(f_gt, fourier_pred)
+    c_loss = comp_loss_fn(comp_gt, complexity_pred)
+
+    total = (loss_weights[0] * p_loss + 
+             loss_weights[1] * d_loss + 
+             loss_weights[2] * f_loss + 
+             loss_weights[3] * c_loss)
+    
+    return total, (p_loss.item(), d_loss.item(), f_loss.item(), c_loss.item())

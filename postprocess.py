@@ -5,6 +5,7 @@ from scipy.ndimage import zoom
 from skimage.segmentation import clear_border
 from models import StarDist2D
 from skimage.draw import polygon
+from fourier_utils import fourier_to_rays
 
 def ray_angles(n_rays=32):
     return np.linspace(0, 2 * np.pi, n_rays, endpoint=False)
@@ -28,9 +29,37 @@ def dist_to_coord(dist, points, scale_dist=(1, 1)):
     return coord
 
 
-def polygons_to_label(dist, points, shape, prob=None, prob_thresh=0.5, scale_dist=(1, 1)):
+def fourier_to_coord(coeffs, points, n_samples=128, scale_dist=(1, 1)):
     """
-    Render polygons thành label mask.
+    Chuyển Fourier coefficients → tọa độ đỉnh polygon mượt.
+    coeffs: (N, 2*(n_harmonics+1))
+    """
+    coeffs = np.asarray(coeffs)
+    points = np.asarray(points)
+    n_harmonics = (coeffs.shape[1] // 2) - 1
+    
+    # Tách Real/Imag
+    real = coeffs[:, :n_harmonics+1]
+    imag = coeffs[:, n_harmonics+1:]
+    c_coeffs = real + 1j * imag
+    
+    # Tái tạo bán kính rho(theta)
+    # rays: (N, n_samples)
+    rays = fourier_to_rays(c_coeffs, n_rays=n_samples)
+    rays = np.maximum(rays, 0) # Không cho phép bán kính âm
+    
+    # Chuyển sang (Y, X)
+    phis = np.linspace(0, 2 * np.pi, n_samples, endpoint=False)
+    coord = (rays[:, np.newaxis] * np.array([np.sin(phis), np.cos(phis)])).astype(np.float32)
+    coord *= np.asarray(scale_dist).reshape(1, 2, 1)
+    coord += points[..., np.newaxis]
+    
+    return coord
+
+
+def polygons_to_label(dist, points, shape, prob=None, prob_thresh=0.5, scale_dist=(1, 1), fourier=None):
+    """
+    Render polygons thành label mask. Nếu có fourier, dùng fourier để render cho mượt.
     """
     dist = np.asarray(dist)
     points = np.asarray(points)
@@ -40,16 +69,23 @@ def polygons_to_label(dist, points, shape, prob=None, prob_thresh=0.5, scale_dis
     points = points[ind]
     dist = dist[ind]
     prob = prob[ind]
+    if fourier is not None:
+        fourier = fourier[ind]
 
     ind_sort = np.argsort(prob, kind='stable')
     points = points[ind_sort]
     dist = dist[ind_sort]
+    if fourier is not None:
+        fourier = fourier[ind_sort]
 
-    coord = dist_to_coord(dist, points, scale_dist=scale_dist)
+    if fourier is not None:
+        # Dùng Fourier để render (mượt hơn)
+        coord = fourier_to_coord(fourier, points, n_samples=128, scale_dist=scale_dist)
+    else:
+        coord = dist_to_coord(dist, points, scale_dist=scale_dist)
     
     label = np.zeros(shape, dtype=np.int32)
     for i, poly in enumerate(coord):
-        # poly: (2, n_rays)
         rr, cc = polygon(poly[0], poly[1], shape)
         label[rr, cc] = i + 1
 
@@ -137,10 +173,10 @@ def non_maximum_suppression(dist, prob, grid=(1, 1), prob_thresh=0.5, nms_thresh
             if iou > nms_thresh:
                 survivors[j] = False
 
-    return points[survivors], scores[survivors], dists[survivors]
+    return points[survivors], scores[survivors], dists[survivors], survivors
 
 
-def inference(model, image, prob_thresh=0.5, nms_thresh=0.5, device='cuda'):
+def inference(model, image, prob_thresh=0.5, nms_thresh=0.5, device='cuda', use_fourier=True):
     """
     Inference full image → instance segmentation.
     """
@@ -155,13 +191,15 @@ def inference(model, image, prob_thresh=0.5, nms_thresh=0.5, device='cuda'):
         img_norm = np.clip(img_norm, 0, 1)
 
         img_tensor = torch.from_numpy(img_norm.transpose(2, 0, 1)).float().unsqueeze(0).to(device)
-        prob, dist = model(img_tensor)
+        prob, dist, fourier, complexity = model(img_tensor)
         
         prob = prob.cpu().numpy()[0, 0]
         dist = dist.cpu().numpy()[0]
+        fourier = fourier.cpu().numpy()[0]
+        complexity = complexity.cpu().numpy()[0, 0]
 
-    # NMS
-    points, scores, dist_filtered = non_maximum_suppression(
+    # NMS (dùng dist/32 rays cho NMS vì nó nhanh và đủ chính xác để so khớp IoU)
+    points, scores, dist_filtered, survivors = non_maximum_suppression(
         dist.transpose(1, 2, 0),
         prob,
         grid=model.grid,
@@ -169,15 +207,38 @@ def inference(model, image, prob_thresh=0.5, nms_thresh=0.5, device='cuda'):
         nms_thresh=nms_thresh
     )
 
-    # Chuyển thành label mask
-    labels = polygons_to_label(dist_filtered, points, shape=image.shape[:2], prob=scores)
+    # Lọc fourier và complexity theo survivors
+    mask = prob > prob_thresh
+    fourier_flat = fourier.transpose(1, 2, 0)[mask]
+    comp_flat = complexity[mask]
+    
+    # Sort theo score (giống NMS)
+    ind_sort = np.argsort(prob[mask])[::-1]
+    fourier_sorted = fourier_flat[ind_sort]
+    comp_sorted = comp_flat[ind_sort]
+    
+    # Lấy những cái sống sót qua NMS
+    fourier_filtered = fourier_sorted[survivors]
+    comp_filtered = comp_sorted[survivors]
 
-    return labels, {'points': points, 'prob': scores, 'dist': dist_filtered}
+    # Chuyển thành label mask (Sử dụng Fourier để render mượt)
+    labels = polygons_to_label(
+        dist_filtered, points, shape=image.shape[:2], 
+        prob=scores, fourier=fourier_filtered if use_fourier else None
+    )
+
+    return labels, {
+        'points': points, 
+        'prob': scores, 
+        'dist': dist_filtered, 
+        'fourier': fourier_filtered,
+        'complexity': comp_filtered
+    }
 
 
 if __name__ == "__main__":
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = StarDist2D(n_channels_in=1).to(device)
+    model = StarDist2D(n_channels_in=1, n_rays=32, n_harmonics=16).to(device)
     dummy_img = np.zeros((256, 256), dtype=np.float32)
     labels, info = inference(model, dummy_img, device=device)
     print("Instance mask shape:", labels.shape)

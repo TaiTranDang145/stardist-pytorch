@@ -1,5 +1,12 @@
 numpy
 pandas
-csbdeep
-pytorch
 scikit-image
+stardist
+csbdeep
+tifffile
+torch
+torchvision
+tqdm
+tensorboard
+scipy
+matplotlib

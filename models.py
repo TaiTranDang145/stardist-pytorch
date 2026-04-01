@@ -30,10 +30,12 @@ class StarDist2D(nn.Module):
         unet_n_filter_base=32,
         unet_n_depth=3,
         net_conv_after_unet=128,
+        n_harmonics=16,
     ):
         super().__init__()
         self.n_rays = n_rays
         self.grid = grid
+        self.n_harmonics = n_harmonics
 
         # Grid pooling (tiền xử lý nếu grid > 1)
         self.input_pooling = nn.Identity()
@@ -102,6 +104,13 @@ class StarDist2D(nn.Module):
 
         self.dist_head = nn.Conv2d(final_ch, n_rays, 1)
 
+        # New Heads for Research
+        self.fourier_head = nn.Conv2d(final_ch, 2 * (n_harmonics + 1), 1)
+        self.complexity_head = nn.Sequential(
+            nn.Conv2d(final_ch, 1, 1),
+            nn.Sigmoid()
+        )
+
     def forward(self, x):
         # Grid pooling
         x = self.input_pooling(x)
@@ -140,16 +149,20 @@ class StarDist2D(nn.Module):
         # Heads
         prob = self.prob_head(feat)
         dist = self.dist_head(feat)
+        fourier = self.fourier_head(feat)
+        complexity = self.complexity_head(feat)
 
-        return prob, dist
+        return prob, dist, fourier, complexity
 
 
 # Test
 if __name__ == "__main__":
-    model = StarDist2D(n_channels_in=1, n_rays=32)
+    model = StarDist2D(n_channels_in=1, n_rays=32, n_harmonics=16)
     dummy = torch.randn(2, 1, 256, 256)
 
-    prob, dist = model(dummy)
+    prob, dist, fourier, complexity = model(dummy)
 
     print("Prob shape:", prob.shape)
-    print("Dist shape:", dist.shape)
+    print("Dist shape:", dist.shape)    
+    print("Fourier shape:", fourier.shape)
+    print("Complexity shape:", complexity.shape)
