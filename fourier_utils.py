@@ -15,24 +15,39 @@ def rays_to_fourier(rays, n_harmonics=10):
     # Thực hiện Real FFT vì rays là số thực
     coeffs = np.fft.rfft(rays, axis=-1)
     
+    # CHUẨN HÓA: Chia cho n_rays để các hệ số Fourier (đặc biệt là a0) 
+    # phản ánh đúng giá trị trung bình (mean radius) thay vì tổng.
+    coeffs = coeffs / n_rays
+    
     # Chỉ giữ lại số lượng harmonics mong muốn
     if n_harmonics is not None:
         return coeffs[..., :n_harmonics + 1]
     return coeffs
 
-def fourier_to_rays(coeffs, n_rays=32):
+def fourier_to_rays(coeffs, n_rays=32, damping_sigma=None):
     """
     Chuyển đổi ngược từ hệ số Fourier sang các tia.
     Args:
         coeffs: mảng phức (..., n_harmonics + 1)
         n_rays: số lượng tia muốn tái tạo (độ mịn)
+        damping_sigma: Độ lệch chuẩn cho bộ lọc Gaussian (làm mượt).
+                      Nếu None, không làm mượt. Gợi ý: n_harmonics / 2.
     Returns:
         rays: mảng thực (..., n_rays)
     """
+    if damping_sigma is not None:
+        n_h = coeffs.shape[-1] - 1
+        k = np.arange(n_h + 1)
+        # Bộ lọc thông thấp Gaussian để khử răng cưa/ringing
+        damping = np.exp(-0.5 * (k / damping_sigma)**2)
+        coeffs = coeffs * damping
+
     # Inverse Real FFT
     # n=n_rays để đảm bảo đầu ra có đúng số lượng tia mong muốn (nội suy)
     rays = np.fft.irfft(coeffs, n=n_rays, axis=-1)
-    return rays
+    
+    # CHUẨN HÓA: Nhân với n_rays để bù đắp việc irfft chia kết quả cho n_rays.
+    return rays * n_rays
 
 def visualize_fourier_reconstruction(rays, harmonics_list=[2, 4, 8, 16]):
     """

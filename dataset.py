@@ -89,7 +89,6 @@ class StarDistDataset2D(Dataset):
 
         # Nếu ảnh nhỏ hơn patch_size → fallback dùng toàn bộ ảnh (sẽ pad sau)
         if h < ph or w < pw:
-            print(f"Ảnh {self.image_paths[idx]} nhỏ hơn patch_size ({h}x{w} < {ph}x{pw}), dùng toàn bộ ảnh")
             valid_y = np.array([0])
             valid_x = np.array([0])
         else:
@@ -307,6 +306,6 @@ if __name__ == "__main__":
         print(images.shape)         # torch.Size([8, 1, 256, 256])
         print(probs.shape)          # torch.Size([8, 1, 256, 256])
         print(dist_masks.shape)     # torch.Size([8, 33, 256, 256])
-        print(fourier_coeffs.shape) # torch.Size([8, 34, 256, 256])  # 2 * (16 + 1)
+        print(fourier_coeffs.shape) # torch.Size([8, 35, 256, 256])  # 2 * (16 + 1) + 1 (complexity)
         break
     

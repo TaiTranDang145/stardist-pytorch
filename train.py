@@ -12,16 +12,16 @@ from dataset import create_dataloaders, StarDistDataset2D, augmenter
 from models import StarDist2D
 from loss import total_loss, kld_metric
 class TrainConfig:
-    epochs = 100
-    steps_per_epoch = 100
-    batch_size = 16
+    epochs = 10                   # Chỉnh lại 10 để demo nhanh
+    steps_per_epoch = 20          # Tăng lên 20 bước để học hiệu quả hơn chút
+    batch_size = 4                # Giảm batch size cho demo
     learning_rate = 0.0003
     patch_size = (256, 256)
     n_rays = 32
-    n_harmonics = 16              # Thêm n_harmonics
+    n_harmonics = 16
     foreground_prob = 0.9
     reg_weight = 1e-4
-    loss_weights = (1.0, 0.2, 0.2, 0.1)  # prob, dist, fourier, complexity
+    loss_weights = (1.0, 0.2, 0.2, 0.1)
     save_dir = "checkpoints"
     log_dir = "tensorboard_logs"
     checkpoint_interval = 20
@@ -50,8 +50,8 @@ def train():
         patch_size=config.patch_size,
         batch_size=config.batch_size,
         foreground_prob=config.foreground_prob,
-        num_workers=8,
-        pin_memory=True,
+        num_workers=0,
+        pin_memory=False,
     )
 
     # Model

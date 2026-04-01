@@ -29,10 +29,11 @@ def dist_to_coord(dist, points, scale_dist=(1, 1)):
     return coord
 
 
-def fourier_to_coord(coeffs, points, n_samples=128, scale_dist=(1, 1)):
+def fourier_to_coord(coeffs, points, n_samples=128, scale_dist=(1, 1), damping_sigma=8):
     """
     Chuyển Fourier coefficients → tọa độ đỉnh polygon mượt.
     coeffs: (N, 2*(n_harmonics+1))
+    damping_sigma: Hệ số làm mượt (Gaussian low-pass).
     """
     coeffs = np.asarray(coeffs)
     points = np.asarray(points)
@@ -45,7 +46,7 @@ def fourier_to_coord(coeffs, points, n_samples=128, scale_dist=(1, 1)):
     
     # Tái tạo bán kính rho(theta)
     # rays: (N, n_samples)
-    rays = fourier_to_rays(c_coeffs, n_rays=n_samples)
+    rays = fourier_to_rays(c_coeffs, n_rays=n_samples, damping_sigma=damping_sigma)
     rays = np.maximum(rays, 0) # Không cho phép bán kính âm
     
     # Chuyển sang (Y, X)

@@ -1,64 +1,43 @@
-# Fourier StarDist: Dynamic Rays for Cell Segmentation
+# Fourier StarDist: Dynamic Rays for Smooth Cell Segmentation
 
-Dự án này là phiên bản cải tiến của **StarDist**, tích hợp cơ chế **Fourier-based Shape Modeling** (với Dynamic Rays) để đạt được độ mượt mà tối ưu cho biên tế bào và khả năng thích ứng linh hoạt với độ phức tạp của hình dạng.
+Dự án này triển khai kiến trúc **Fourier StarDist**, thay đổi cách biểu diễn hình dạng tế bào từ các tia (rays) truyền thống sang các hệ số Fourier (Fourier Coefficients). Điều này mang lại độ mượt mà tối ưu cho biên tế bào và khả năng thích ứng linh hoạt với độ phức tạp của hình dạng.
 
-## 🚀 Tính năng nổi bật
+## ✨ Tính năng nổi bật
+- **Fourier StarDist**: Sử dụng hệ số Fourier thay vì 32 tia cố định, cho phép tái tạo biên mượt mà với độ phân giải bất kỳ (mặc định 128 điểm).
+- **Dynamic Rays**: Tự động điều chỉnh độ chi tiết của biên ở giai đoạn hậu xử lý mà không cần thay đổi model.
+- **Complexity-based Gating**: Nhánh dự đoán độ phức tạp (Complexity Head) giúp mô hình tối ưu hóa việc phân hóa giữa các tế bào tròn và tế bào có hình dạng phức tạp.
+- **Smooth Reconstruction**: Tích hợp bộ lọc Gaussian Low-pass trong `fourier_utils.py` để loại bỏ hiện tượng răng cưa/rung (ringing artifacts).
 
-- **Fourier StarDist**: Thay vì dự đoán 32 tia rời rạc, mô hình dự đoán các hệ số Fourier Complex. Điều này cho phép tái tạo biên tế bào mượt mà với độ phân giải bất kỳ.
-- **Dynamic Rays**: Số lượng mẫu điểm trên biên có thể điều chỉnh linh hoạt ở giai đoạn inference mà không cần train lại model.
-- **Complexity-based Gating**: Nhánh dự đoán độ phức tạp (Complexity Head) giúp mô hình nhận diện các tế bào có hình dạng bất thường, hỗ trợ hậu xử lý thông minh hơn.
-- **Adaptive Loss**: Hệ thống loss đa thành phần kết hợp Prob, Distance, Fourier Coefficients và Complexity Score.
+## 🚀 Hướng dẫn nhanh
 
-## 📦 Cài đặt
-
-Để bắt đầu, hãy tạo môi trường ảo và cài đặt tất cả các dependencies thông qua file `requirements.txt`:
-
+### 1. Cài đặt môi trường
+Yêu cầu Python 3.10+. Cài đặt các phụ thuộc:
 ```bash
-# Tạo môi trường ảo
-python -m venv .venv
-
-# Kích hoạt môi trường ảo (Linux)
-source .venv/bin/activate
-
-# Cài đặt toàn bộ dependencies
 pip install -r requirements.txt
 ```
 
-## 🛠 Cấu trúc Project
-
-- `models.py`: Kiến trúc StarDist2D cải tiến với Fourier & Complexity heads.
-- `dataset.py`: DataLoader cho DSB2018 hỗ trợ tính toán Fourier & Complexity Ground Truth.
-- `fourier_utils.py`: Thư viện lõi xử lý biến đổi Fourier cho đa giác.
-- `loss.py`: Định nghĩa các hàm loss cho kiến trúc Fourier.
-- `postprocess.py`: Hậu xử lý NMS và render polygon từ hệ số Fourier.
-- `train.py`: Quy trình huấn luyện với logging TensorBoard chi tiết.
-- `demo_fourier.py`: Script minh họa khả năng tái tạo hình dạng mượt mà của Fourier.
-
-## 🏋️‍♂️ Huấn luyện
-
-Đảm bảo dữ liệu DSB2018 nằm trong `data/dsb2018/train/`. Sau đó chạy:
+### 2. Huấn luyện (Training)
+Để bắt đầu huấn luyện dài hạn trên GPU:
+1. Kiểm tra dữ liệu trong `data/dsb2018/`.
+2. Chạy lệnh:
 ```bash
 python train.py
 ```
+*Lưu ý: File `train.py` đã được cấu hình mặc định 100 epochs với Batch Size 16 và các tham số tối ưu.*
 
-Theo dõi quá trình huấn luyện bằng TensorBoard:
+### 3. Chạy Demo & Kiểm tra độ mượt
+Để chạy thử inference và xem kết quả so sánh:
 ```bash
-tensorboard --logdir=tensorboard_logs
+python demo_inference.py
 ```
+Kết quả trực quan sẽ được lưu tại `fourier_stardist_demo.png`.
 
-## 🔍 Inference & Visualization
+## 📂 Cấu trúc mã nguồn
+- `models.py`: Kiến trúc U-Net cải tiến với Fourier & Complexity heads.
+- `dataset.py`: DataLoader hỗ trợ tính toán Fourier & Complexity Ground Truth.
+- `fourier_utils.py`: Thư viện xử lý FFT và làm mượt biên (Damping).
+- `postprocess.py`: Hậu xử lý NMS và render Polygon hiệu năng cao.
+- `loss.py`: Hệ thống hàm mất mát đa nhiệm (Prob, Dist, Fourier, Complexity).
 
-Để chạy thử inference trên ảnh mới và xem kết quả dựng biên từ Fourier:
-```bash
-python postprocess.py
-```
-
-Sử dụng `visualize_prediction.py` để xem các heatmap xác suất và khoảng cách.
-
-## 📊 Kết quả Demo
-
-| Gốc (32 Rays) | Fourier Reconstruction (16 Harmonics) |
-| :---: | :---: |
-| Răng cưa, đa giác thô | Đường cong mượt mà, tự nhiên |
-
-*Xem chi tiết tại [fourier_recon_demo.png](fourier_recon_demo.png)*
+---
+*Dự án được phát triển nhằm nâng cao độ chính xác hình thái trong phân đoạn ảnh y sinh.*
