@@ -60,6 +60,42 @@ def masked_bce_loss():
     return bce
 
 
+def boundary_dice_loss(y_true, y_pred, smooth=1e-5):
+    """
+    Boundary Dice Loss để xử lý class imbalance cho boundary head.
+    
+    Args:
+        y_true: Ground truth boundary mask (B, 1, H, W) with values in {0, 1}
+        y_pred: Predicted boundary probability (B, 1, H, W) with values in [0, 1]
+        smooth: Laplace smoothing để tránh chia cho 0
+    
+    Returns:
+        Dice Loss = 1 - Dice Coefficient
+    
+    Công thức:
+        Dice = (2 * |X ∩ Y| + ε) / (|X| + |Y| + ε)
+        Loss = 1 - Dice
+    """
+    # Flatten spatial dimensions
+    y_true_f = y_true.view(y_true.size(0), -1)  # (B, H*W)
+    y_pred_f = y_pred.view(y_pred.size(0), -1)  # (B, H*W)
+    
+    # Tính intersection và union
+    intersection = torch.sum(y_pred_f * y_true_f, dim=1)  # (B,)
+    
+    # Tổng các pixel
+    sum_pred = torch.sum(y_pred_f, dim=1)  # (B,)
+    sum_true = torch.sum(y_true_f, dim=1)  # (B,)
+    
+    # Dice coefficient
+    dice = (2.0 * intersection + smooth) / (sum_pred + sum_true + smooth)
+    
+    # Dice loss
+    loss = 1.0 - dice
+    
+    return loss.mean()
+
+
 def kld_metric(y_true, y_pred):
     valid_mask = (y_true >= 0)
     y_true_valid = torch.clamp(y_true[valid_mask], 1e-7, 1.0 - 1e-7)
@@ -92,7 +128,48 @@ def complexity_loss_fn(mask):
     )
 
 
-#Tổng loss
+# Total loss với Boundary Dice Loss (theo yêu cầu CHANGES.md)
+def total_loss_with_boundary(prob_pred, dist_pred, boundary_pred, 
+                             prob_gt, dist_mask_gt, boundary_gt,
+                             loss_weights=(1.0, 0.2, 0.5)):
+    """
+    Combined Loss Function với 3 heads như yêu cầu trong CHANGES.md:
+    Total Loss = λ1·L_BCE + λ2·L_MAE + λ3·L_Dice_Boundary
+    
+    Args:
+        prob_pred: Probability prediction (B, 1, H, W)
+        dist_pred: Distance prediction (B, n_rays, H, W)
+        boundary_pred: Boundary prediction (B, 1, H, W)
+        prob_gt: Ground truth probability (B, 1, H, W)
+        dist_mask_gt: Distance + mask (B, n_rays+1, H, W) - kênh cuối là mask
+        boundary_gt: Ground truth boundary (B, 1, H, W)
+        loss_weights: (λ1, λ2, λ3) - trọng số cho từng loss
+    
+    Returns:
+        total_loss, (p_loss, d_loss, b_loss)
+    """
+    # 1. Probability Loss (BCE)
+    prob_loss_fn = masked_bce_loss()
+    p_loss = prob_loss_fn(prob_gt, prob_pred)
+    
+    # 2. Distance Loss (MAE)
+    mask = dist_mask_gt[:, -1:]  # Lấy mask từ kênh cuối
+    dist_gt = dist_mask_gt[:, :-1]  # Lấy distance rays
+    dist_loss_fn = masked_mae_loss(mask=mask)
+    d_loss = dist_loss_fn(dist_gt, dist_pred)
+    
+    # 3. Boundary Dice Loss (NEW)
+    b_loss = boundary_dice_loss(boundary_gt, boundary_pred)
+    
+    # Combined loss
+    total = (loss_weights[0] * p_loss + 
+             loss_weights[1] * d_loss + 
+             loss_weights[2] * b_loss)
+    
+    return total, (p_loss.item(), d_loss.item(), b_loss.item())
+
+
+# Tổng loss (legacy - để tương thích với code cũ sử dụng fourier và complexity)
 def total_loss(prob_pred, dist_pred, fourier_pred, complexity_pred, 
                prob_gt, dist_mask_gt, fourier_gt,
                loss_weights=(1.0, 0.2, 0.2, 0.1)):
@@ -123,3 +200,4 @@ def total_loss(prob_pred, dist_pred, fourier_pred, complexity_pred,
              loss_weights[3] * c_loss)
     
     return total, (p_loss.item(), d_loss.item(), f_loss.item(), c_loss.item())
+
