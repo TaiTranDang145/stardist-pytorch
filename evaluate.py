@@ -17,11 +17,23 @@ def evaluate_model(root_dir="data/dsb2018/train/", checkpoint="checkpoints/best_
     print(f"Đang đánh giá mô hình trên {device}...")
 
     # 1. Load Model
-    model = StarDist2D(n_harmonics=16).to(device)
+    model = StarDist2D(
+        n_channels_in=1,
+        n_rays=32,
+        grid=(1, 1),
+        unet_n_depth=2,
+        unet_n_filter_base=16,
+        net_conv_after_unet=64,
+        n_harmonics=16,
+    ).to(device)
     if not os.path.exists(checkpoint):
         print(f"Error: Không tìm thấy checkpoint tại {checkpoint}")
         return
-    model.load_state_dict(torch.load(checkpoint, map_location=device))
+    ckpt = torch.load(checkpoint, map_location=device)
+    if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+        model.load_state_dict(ckpt["model_state_dict"])
+    else:
+        model.load_state_dict(ckpt)
     model.eval()
 
     # 2. Load Validation Data

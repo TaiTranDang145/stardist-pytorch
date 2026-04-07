@@ -11,37 +11,64 @@ import numpy as np
 from dataset import create_dataloaders, StarDistDataset2D, augmenter
 from models import StarDist2D
 from loss import total_loss, kld_metric
+
+
+def pick_device() -> torch.device:
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
 class TrainConfig:
-    epochs = 10                   # Chỉnh lại 10 để demo nhanh
-    steps_per_epoch = 20          # Tăng lên 20 bước để học hiệu quả hơn chút
-    batch_size = 4                # Giảm batch size cho demo
-    learning_rate = 0.0003
+    # --- Cấu hình Training ---
+    epochs = 10           
+    steps_per_epoch = 100          # train_steps_per_epoch gốc
+    batch_size = 16               # Tăng lên 16 cho RTX 4060
+    learning_rate = 0.0003         # train_learning_rate gốc
     patch_size = (256, 256)
     n_rays = 32
     n_harmonics = 16
-    foreground_prob = 0.9
-    reg_weight = 1e-4
+    foreground_prob = 0.9          # train_foreground_only
+    reg_weight = 1e-4              # train_background_reg
     loss_weights = (1.0, 0.2, 0.2, 0.1)
     save_dir = "checkpoints"
     log_dir = "tensorboard_logs"
-    checkpoint_interval = 20
-    early_stop_patience = 40
-    resume = True
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    checkpoint_interval = 20       # save mỗi 50 epoch
+    early_stop_patience = 40       # tương đương patience trong ReduceLR
+    resume = True                  # Tự động load checkpoint nếu có
+    
+    # --- Cấu hình Kiến trúc Model ---
+    # Lưu ý: Nếu thay đổi các thông số này, bạn không thể load checkpoint cũ (size mismatch)
+    unet_n_depth = 2               # Khớp với checkpoint cũ
+    unet_n_filter_base = 16        # Khớp với checkpoint cũ
+    net_conv_after_unet = 64       # Khớp với checkpoint cũ
+    
+    # --- Thiết bị ---
+    device = pick_device()
+    num_workers = 0 if device.type == "mps" else 2
 
 
 def train():
     config = TrainConfig()
 
+    checkpoint_path = os.path.join(config.save_dir, "best_model.pth")
+
+    # Chỉ xóa log nếu không resume hoặc không tìm thấy checkpoint
     if os.path.exists(config.log_dir):
-        import shutil
-        shutil.rmtree(config.log_dir)
+        if not (config.resume and os.path.exists(checkpoint_path)):
+            import shutil
+            shutil.rmtree(config.log_dir)
+            print(f"TensorBoard logs tại: {config.log_dir} (đã xóa log cũ)")
+        else:
+            print(f"TensorBoard logs tại: {config.log_dir} (tiếp tục log cũ)")
+
     os.makedirs(config.log_dir, exist_ok=True)
     os.makedirs(config.save_dir, exist_ok=True)
 
     # TensorBoard writer
     writer = SummaryWriter(log_dir=config.log_dir)
-    print(f"TensorBoard logs tại: {config.log_dir} (đã xóa log cũ)")
     print("Chạy lệnh: tensorboard --logdir=tensorboard_logs")
 
     # DataLoaders
@@ -50,44 +77,77 @@ def train():
         patch_size=config.patch_size,
         batch_size=config.batch_size,
         foreground_prob=config.foreground_prob,
-        num_workers=0,
-        pin_memory=False,
+        num_workers=config.num_workers,
+        pin_memory=True if config.device.type == "cuda" else False,
     )
 
     # Model
     model = StarDist2D(
         n_channels_in=1,
         n_rays=config.n_rays,
-        grid=(1,1),
-        unet_n_depth=3,
-        unet_n_filter_base=32,
-        net_conv_after_unet=128,
+        grid=(1, 1),
+        unet_n_depth=config.unet_n_depth,
+        unet_n_filter_base=config.unet_n_filter_base,
+        net_conv_after_unet=config.net_conv_after_unet,
         n_harmonics=config.n_harmonics,
     ).to(config.device)
-    
-    # LOAD CHECKPOINT (RESUME)
-    checkpoint_path = os.path.join(config.save_dir, "best_model.pth")
-    if config.resume and os.path.exists(checkpoint_path):
-        try:
-            model.load_state_dict(torch.load(checkpoint_path, map_location=config.device))
-            print(f"→ Đã load checkpoint từ {checkpoint_path} để tiếp tục train.")
-        except:
-            print("→ Cấu trúc model thay đổi (Fourier), bắt đầu train mới.")
-    elif config.resume:
-        print("→ Không tìm thấy checkpoint cũ, bắt đầu train mới.")
 
     # Optimizer & Scheduler
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=40, min_lr=1e-7
+        optimizer,
+        mode='min',
+        factor=0.5,
+        patience=40,
+        min_lr=1e-7
     )
 
+    start_epoch = 1
     best_val_loss = float('inf')
     patience_counter = 0
 
+    # LOAD CHECKPOINT (RESUME TOÀN BỘ TRẠNG THÁI)
+    if config.resume and os.path.exists(checkpoint_path):
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=config.device)
+
+            if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                missing, unexpected = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+                start_epoch = checkpoint["epoch"] + 1
+                best_val_loss = checkpoint.get("best_val_loss", float('inf'))
+                patience_counter = checkpoint.get("patience_counter", 0)
+                print(f"→ Đã load checkpoint từ {checkpoint_path} tại epoch {checkpoint['epoch']}.")
+            else:
+                missing, unexpected = model.load_state_dict(checkpoint, strict=False)
+                print(f"→ Đã load state_dict từ {checkpoint_path}.")
+
+            if missing:
+                print(f"⚠  Head mới (khởi tạo random): {missing}")
+            if unexpected:
+                print(f"⚠  Key không dùng trong checkpoint: {unexpected}")
+
+        except RuntimeError as e:
+            print("\n" + "="*50)
+            print("LỖI: Không thể nạp checkpoint do lệch cấu hình mạng!")
+            print(f"Chi tiết lỗi: {e}")
+            print("="*50)
+            print("HƯỚNG DẪN KHẮC PHỤC:")
+            print("1. Nếu muốn dùng model hiện tại (mạnh hơn): Hãy xóa thư mục 'checkpoints' và chạy lại.")
+            print("2. Nếu muốn dùng tiếp model cũ: Chỉnh cấu hình trong TrainConfig về:")
+            print("   unet_n_depth = 2")
+            print("   unet_n_filter_base = 16")
+            print("   net_conv_after_unet = 64")
+            print("="*50 + "\n")
+            return  # Dừng chương trình để người dùng xử lý
+
+    elif config.resume:
+        print("→ Không tìm thấy checkpoint cũ, bắt đầu train mới.")
+
     print(f"Training trên {config.device} | Train samples: {len(train_loader.dataset)} | Val samples: {len(val_loader.dataset)}")
 
-    for epoch in range(1, config.epochs + 1):
+    for epoch in range(start_epoch, config.epochs + 1):
         start_time = time.time()
 
         # Train một epoch
@@ -181,13 +241,26 @@ def train():
               f"Loss: {train_loss:.4f} (Val: {val_loss:.4f}) | "
               f"Fourier Loss: {train_components[2]:.4f} | "
               f"Complexity Loss: {train_components[3]:.4f} | "
+              f"LR: {optimizer.param_groups[0]['lr']:.6f} | "
               f"Time: {epoch_time:.2f}s")
+
+        # Chuẩn bị checkpoint dict
+        checkpoint_dict = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "best_val_loss": best_val_loss,
+            "patience_counter": patience_counter,
+        }
 
         # Save checkpoint tốt nhất
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pth"))
+            checkpoint_dict["best_val_loss"] = best_val_loss
+            checkpoint_dict["patience_counter"] = patience_counter
+            torch.save(checkpoint_dict, checkpoint_path)
             print(f"→ Saved best model (val_loss = {val_loss:.4f})")
         else:
             patience_counter += 1
@@ -195,8 +268,10 @@ def train():
                 print(f"Early stopping tại epoch {epoch}")
                 break
 
+        # Save periodic
         if epoch % 50 == 0:
-            torch.save(model.state_dict(), os.path.join(config.save_dir, f"model_epoch_{epoch}.pth"))
+            periodic_path = os.path.join(config.save_dir, f"model_epoch_{epoch}.pth")
+            torch.save(checkpoint_dict, periodic_path)
 
     writer.close()
     print("Training hoàn tất!")

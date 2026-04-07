@@ -1,0 +1,18 @@
+{
+  "name": "ref06_dist018",
+  "best_val_loss": 0.9252851254617175,
+  "best_epoch": 6,
+  "seconds": 92.61584520339966,
+  "optimizer": "adam",
+  "weight_decay": 0.0,
+  "batch_size": 2,
+  "learning_rate": 0.0006,
+  "loss_w_prob": 1.0,
+  "loss_w_dist": 0.18,
+  "patch_h": 192,
+  "patch_w": 192,
+  "depth": 2,
+  "filter_base": 16,
+  "conv_after_unet": 64,
+  "params_million": 0.128481
+}
