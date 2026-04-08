@@ -1,11 +1,9 @@
 # Python cache
 __pycache__/
 tensorboard_logs/
-checkpoints/
 data/
 *.png
 *.tif
-*.pth
 *.py[cod]
 *$py.class
 

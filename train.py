@@ -16,7 +16,7 @@ class TrainConfig:
     # Training parameters
     epochs = 100
     steps_per_epoch = 100
-    batch_size = 16
+    batch_size = 4
     learning_rate = 0.0003
     patch_size = (256, 256)
     n_rays = 32
@@ -74,7 +74,7 @@ def train():
         patch_size=config.patch_size,
         batch_size=config.batch_size,
         foreground_prob=config.foreground_prob,
-        num_workers=0,  # Fix Windows multiprocessing error
+        num_workers=2,  # Fix Windows multiprocessing error
         pin_memory=False,  # Set False cho stability trên Windows
     )
 
