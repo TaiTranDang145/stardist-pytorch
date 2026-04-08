@@ -9,11 +9,32 @@ from postprocess import inference
 from stardist.matching import matching_dataset
 import argparse
 
+def evaluate_instances(model, val_image_paths, val_mask_paths, prob_thresh=0.4, nms_thresh=0.3, iou_thresh=0.5, device='cuda'):
+    Y_true = []
+    Y_pred = []
+    for img_p, mask_p in zip(val_image_paths, val_mask_paths):
+        img = tifffile.imread(img_p)
+        gt_mask = tifffile.imread(mask_p)
+        pred_mask, _ = inference(model, img, prob_thresh=prob_thresh, nms_thresh=nms_thresh, device=device)
+        Y_true.append(gt_mask)
+        Y_pred.append(pred_mask)
+    
+    stats = matching_dataset(Y_true, Y_pred, thresh=iou_thresh, show_progress=False)
+    # matching_dataset trả về 1 list nếu truyền 1 mảng ngưỡng, trả obj nếu truyền 1 ngưỡng. Ta dự phòng list
+    if isinstance(stats, list):
+        return stats[0]
+    return stats
+
 def evaluate_model(root_dir="data/dsb2018/train/", checkpoint="checkpoints/best_model.pth", prob_thresh=0.4, nms_thresh=0.3):
     """
     Chương trình đánh giá model Fourier StarDist bằng chỉ số mAP tiêu chuẩn.
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
     print(f"Đang đánh giá mô hình trên {device}...")
 
     # 1. Load Model
@@ -85,7 +106,7 @@ def evaluate_model(root_dir="data/dsb2018/train/", checkpoint="checkpoints/best_
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate Fourier StarDist model.')
     parser.add_argument('--checkpoint', type=str, default='checkpoints/best_model.pth', help='Path to checkpoint.')
-    parser.add_argument('--prob_thresh', type=str, default=0.4, help='Probability threshold.')
+    parser.add_argument('--prob_thresh', type=float, default=0.4, help='Probability threshold.')
     args = parser.parse_args()
     
     evaluate_model(checkpoint=args.checkpoint, prob_thresh=float(args.prob_thresh))

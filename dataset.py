@@ -45,6 +45,10 @@ class StarDistDataset2D(Dataset):
         self.cache_valid_inds = cache_valid_inds
         self.n_harmonics = n_harmonics
         self.lock = threading.Lock()
+        
+        # RAM Cache
+        self.img_cache = {}
+        self.mask_cache = {}
 
         # maxfilter_patch_size để kiểm tra foreground
         self.maxfilter_patch_size = maxfilter_patch_size or self.patch_size
@@ -81,7 +85,7 @@ class StarDistDataset2D(Dataset):
         if key in cache:
             return cache[key]
 
-        mask = tifffile.imread(self.mask_paths[idx])
+        mask = self.mask_cache[idx]
         mask = fill_label_holes(mask)
 
         h, w = mask.shape
@@ -114,11 +118,15 @@ class StarDistDataset2D(Dataset):
 
 
     def __getitem__(self, idx):
-        img = tifffile.imread(self.image_paths[idx]).astype(np.float32)
-        mask = tifffile.imread(self.mask_paths[idx]).astype(np.int32)
-
-        if img.ndim == 2:
-            img = img[..., None]
+        if idx not in self.img_cache:
+            img = tifffile.imread(self.image_paths[idx]).astype(np.float32)
+            if img.ndim == 2:
+                img = img[..., None]
+            self.img_cache[idx] = img
+            self.mask_cache[idx] = tifffile.imread(self.mask_paths[idx]).astype(np.int32)
+            
+        img = self.img_cache[idx]
+        mask = self.mask_cache[idx]
 
         h, w = mask.shape
         ph, pw = self.patch_size
@@ -243,8 +251,13 @@ def create_dataloaders(
     )
 
     train_size = int((1 - val_split_ratio) * len(dataset))
-    val_size = len(dataset) - train_size
-    train_ds, val_ds = random_split(dataset, [train_size, val_size])
+    
+    indices = list(range(len(dataset)))
+    train_ds = torch.utils.data.Subset(dataset, indices[:train_size])
+    val_ds = torch.utils.data.Subset(dataset, indices[train_size:])
+
+    val_image_paths = [image_paths[i] for i in indices[train_size:]]
+    val_mask_paths = [mask_paths[i] for i in indices[train_size:]]
 
     train_loader = DataLoader(
         train_ds,
@@ -253,6 +266,7 @@ def create_dataloaders(
         num_workers=num_workers,
         collate_fn=custom_collate,
         pin_memory=pin_memory,
+        persistent_workers=(num_workers > 0),
     )
  
     val_loader = DataLoader(
@@ -262,9 +276,10 @@ def create_dataloaders(
         num_workers=num_workers,
         collate_fn=custom_collate,
         pin_memory=pin_memory,
+        persistent_workers=(num_workers > 0),
     )
 
-    return train_loader, val_loader
+    return train_loader, val_loader, val_image_paths, val_mask_paths
 
 
 # Hàm augmenter

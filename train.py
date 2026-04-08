@@ -11,6 +11,12 @@ import numpy as np
 from dataset import create_dataloaders, StarDistDataset2D, augmenter
 from models import StarDist2D
 from loss import total_loss, kld_metric
+from evaluate import evaluate_instances
+
+def repeater(dataloader):
+    while True:
+        for batch in dataloader:
+            yield batch
 
 
 def pick_device() -> torch.device:
@@ -39,6 +45,11 @@ class TrainConfig:
     early_stop_patience = 40       # tương đương patience trong ReduceLR
     resume = True                  # Tự động load checkpoint nếu có
     
+    # --- Cấu hình Đánh giá (Metrics) ---
+    eval_prob_thresh = 0.4
+    eval_nms_thresh = 0.3
+    eval_iou_thresh = 0.5
+    
     # --- Cấu hình Kiến trúc Model ---
     # Lưu ý: Nếu thay đổi các thông số này, bạn không thể load checkpoint cũ (size mismatch)
     unet_n_depth = 2               # Khớp với checkpoint cũ
@@ -47,17 +58,18 @@ class TrainConfig:
     
     # --- Thiết bị ---
     device = pick_device()
-    num_workers = 0 if device.type == "mps" else 2
+    num_workers = 4 # Tăng tốc bằng multiprocessing
 
 
 def train():
     config = TrainConfig()
 
     checkpoint_path = os.path.join(config.save_dir, "best_model.pth")
+    last_checkpoint_path = os.path.join(config.save_dir, "last_model.pth")
 
     # Chỉ xóa log nếu không resume hoặc không tìm thấy checkpoint
     if os.path.exists(config.log_dir):
-        if not (config.resume and os.path.exists(checkpoint_path)):
+        if not (config.resume and (os.path.exists(checkpoint_path) or os.path.exists(last_checkpoint_path))):
             import shutil
             shutil.rmtree(config.log_dir)
             print(f"TensorBoard logs tại: {config.log_dir} (đã xóa log cũ)")
@@ -72,7 +84,7 @@ def train():
     print("Chạy lệnh: tensorboard --logdir=tensorboard_logs")
 
     # DataLoaders
-    train_loader, val_loader = create_dataloaders(
+    train_loader, val_loader, val_image_paths, val_mask_paths = create_dataloaders(
         root_dir="data/dsb2018/train/",
         patch_size=config.patch_size,
         batch_size=config.batch_size,
@@ -107,9 +119,10 @@ def train():
     patience_counter = 0
 
     # LOAD CHECKPOINT (RESUME TOÀN BỘ TRẠNG THÁI)
-    if config.resume and os.path.exists(checkpoint_path):
+    load_path = last_checkpoint_path if os.path.exists(last_checkpoint_path) else checkpoint_path
+    if config.resume and os.path.exists(load_path):
         try:
-            checkpoint = torch.load(checkpoint_path, map_location=config.device)
+            checkpoint = torch.load(load_path, map_location=config.device)
 
             if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
                 missing, unexpected = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
@@ -118,10 +131,10 @@ def train():
                 start_epoch = checkpoint["epoch"] + 1
                 best_val_loss = checkpoint.get("best_val_loss", float('inf'))
                 patience_counter = checkpoint.get("patience_counter", 0)
-                print(f"→ Đã load checkpoint từ {checkpoint_path} tại epoch {checkpoint['epoch']}.")
+                print(f"→ Đã load checkpoint từ {load_path} tại epoch {checkpoint['epoch']}.")
             else:
                 missing, unexpected = model.load_state_dict(checkpoint, strict=False)
-                print(f"→ Đã load state_dict từ {checkpoint_path}.")
+                print(f"→ Đã load state_dict từ {load_path}.")
 
             if missing:
                 print(f"⚠  Head mới (khởi tạo random): {missing}")
@@ -147,6 +160,8 @@ def train():
 
     print(f"Training trên {config.device} | Train samples: {len(train_loader.dataset)} | Val samples: {len(val_loader.dataset)}")
 
+    train_iter = iter(repeater(train_loader))
+
     for epoch in range(start_epoch, config.epochs + 1):
         start_time = time.time()
 
@@ -157,13 +172,8 @@ def train():
         train_kld = 0.0
         train_steps = 0
 
-        train_iter = iter(train_loader)
         for step in tqdm(range(config.steps_per_epoch), desc=f"Epoch {epoch} [Train]"):
-            try:
-                images, prob_gt, dist_mask_gt, fourier_gt = next(train_iter)
-            except StopIteration:
-                train_iter = iter(train_loader)
-                images, prob_gt, dist_mask_gt, fourier_gt = next(train_iter)
+            images, prob_gt, dist_mask_gt, fourier_gt = next(train_iter)
 
             images = images.to(config.device)
             prob_gt = prob_gt.to(config.device)
@@ -235,12 +245,32 @@ def train():
         writer.add_scalar("KLD/val", val_kld, epoch)
         writer.add_scalar("Learning_Rate", optimizer.param_groups[0]['lr'], epoch)
 
+        # Đánh giá Metric F1, Precision, Recall
+        print(f"--> Đang chạy inference tập Val (15 ảnh ngẫu nhiên) để tính AP (prob_thresh={config.eval_prob_thresh}, nms_thresh={config.eval_nms_thresh})...")
+        import random
+        eval_indices = random.sample(range(len(val_image_paths)), min(15, len(val_image_paths)))
+        sub_val_img = [val_image_paths[i] for i in eval_indices]
+        sub_val_mask = [val_mask_paths[i] for i in eval_indices]
+        
+        val_stat = evaluate_instances(
+            model, sub_val_img, sub_val_mask,
+            prob_thresh=config.eval_prob_thresh,
+            nms_thresh=config.eval_nms_thresh,
+            iou_thresh=config.eval_iou_thresh,
+            device=config.device
+        )
+        
+        writer.add_scalar("Metrics/Precision", val_stat.precision, epoch)
+        writer.add_scalar("Metrics/Recall", val_stat.recall, epoch)
+        writer.add_scalar("Metrics/F1", val_stat.f1, epoch)
+
         # Thời gian & print
         epoch_time = time.time() - start_time
         print(f"Epoch {epoch}/{config.epochs} | "
               f"Loss: {train_loss:.4f} (Val: {val_loss:.4f}) | "
-              f"Fourier Loss: {train_components[2]:.4f} | "
-              f"Complexity Loss: {train_components[3]:.4f} | "
+              f"Fourier: {train_components[2]:.4f} | "
+              f"Complex: {train_components[3]:.4f} | "
+              f"Prec: {val_stat.precision:.4f} - Rec: {val_stat.recall:.4f} - F1: {val_stat.f1:.4f} | "
               f"LR: {optimizer.param_groups[0]['lr']:.6f} | "
               f"Time: {epoch_time:.2f}s")
 
@@ -253,6 +283,9 @@ def train():
             "best_val_loss": best_val_loss,
             "patience_counter": patience_counter,
         }
+
+        # Lưu last model
+        torch.save(checkpoint_dict, last_checkpoint_path)
 
         # Save checkpoint tốt nhất
         if val_loss < best_val_loss:
@@ -278,4 +311,6 @@ def train():
 
 
 if __name__ == "__main__":
+    import torch.multiprocessing as mp
+    mp.set_start_method('spawn', force=True)
     train()
